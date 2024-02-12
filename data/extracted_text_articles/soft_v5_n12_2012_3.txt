@@ -1,0 +1,908 @@
+Compiler-based Differentiation of Higher-Order Numerical Simulation Codes using
+Interprocedural Checkpointing
+Michel Schanen, Michael F¨orster, Boris Gendler, Uwe Naumann
+LuFG Informatik 12: Software and Tools for Computational Engineering
+RWTH Aachen University
+Aachen, Germany
+{schanen,foerster,bgendler,naumann}@stce.rwth-aachen.de
+Abstract—Based on algorithmic differentiation, we present
+a derivative code compiler capable of transforming implemen-
+tations of multivariate vector functions into a program for
+computing derivatives. Its unique reapplication feature allows
+the generation of code of an arbitrary order of differentiation,
+where resulting values are still accurate up to machine precision
+compared to the common numerical approximation by ﬁnite
+differences. The high memory load resulting from the adjoint
+model of Algorithmic Differentiation is circumvented using
+semi-automatic interprocedural checkpointing enabled by the
+joint reversal scheme implemented in our compiler. The entire
+process is illustrated by a one dimensional implementation
+of Burgers’ equation in a generic optimization setting using
+for example Newton’s method. In this implementation, ﬁnite
+differences are replaced by the computation of adjoints, thus
+saving an order of magnitude in terms of computational
+complexity.
+Keywords-Algorithmic Differentiation; Source Transforma-
+tion; Optimization; Numerical Simulation; Checkpointing
+I. INTRODUCTION
+A typical problem in ﬂuid dynamics is given by the
+continuous Burgers equation [2]
+∂u
+∂t + u∂u
+∂x = ν ∂2u
+∂x2
+,
+(1)
+describing shock waves moving through gases. u denotes
+the velocity ﬁeld of the ﬂuid with viscosity ν. Similar
+governing equations represent the core of many numerical
+simulations. Such simulations are often subject to various
+optimization techniques involving derivatives. Thus, Burg-
+ers’ equation will serve as a case study for a compiler-based
+approach to the accumulation of the required derivatives.
+Suppose we solve the differential equation in (1) by
+discretization using ﬁnite differences on an equidistant one-
+dimensional grid with nx points. For given initial conditions
+ui,0 with 0 < i ≤ nx we simulate a physical process by inte-
+grating over nt time steps according to the leapfrog/DuFort-
+Frankel scheme presented in [3]. At time step j we compute
+ui,j+1 for time step j + 1 according to
+ui,j+1 = ui,j−1 − ∆t
+∆x (ui,j (ui+1,j − ui−1,j))
++ 2∆t
+∆x2 (ui+1,j − (ui,j+1 + ui,j−1) + ui−1,j) ,
+(2)
+where ∆t is the time interval and ∆x is the distance
+between two grid points. In general, if the initial conditions
+ui,0 cannot be accurately measured, they are essentially
+replaced by approximated values. To improve their accuracy
+additional observed values uob ∈ Rnx×nt are taken into
+account. The discrepancy between observed values uob
+i,j and
+simulated values ui,j are evaluated by the cost function
+y = 1
+2
+nx
+X
+i=1
+nt
+X
+j=1
+(ui,j − uob
+i,j)2
+,
+(3)
+which allows us to obtain improved estimations for the initial
+conditions by applying, for example, Newton’s method [4] to
+solve the data assimilation problem with Burgers’ equation
+as constraints [5]. The single Newton steps are repeated until
+the residual cost y undercuts a certain threshold.
+In Section II, we introduce Algorithmic Differentiation
+(AD) as implemented by our derivative code compiler dcc
+covering both the tangent-linear as well as the adjoint model.
+Section III provides a user’s perspective on the application
+of dcc. Higher-order differentiation models are discussed
+in Section IV. Finally, the results of our case study are
+discussed in Section VII.
+II. ALGORITHMIC DIFFERENTIATION
+The minimization of the residual is implemented by
+resorting to Newton’s second-order method for mini-
+mization. In general, Newton’s method may be applied
+to arbitrary differentiable multivariate vector functions
+y = F (x) : Rn → Rm. This algorithm heavily depends on
+the accurate and fast computation of Jacobian and Hessian
+values, since one iterative step xi → xi+1 is computed by
+xi+1 = xi − ∇2F(xi)−1 · ∇F(xi)
+.
+(4)
+27
+International Journal on Advances in Software, vol 5 no 1 & 2, year 2012, http://www.iariajournals.org/software/
+2012, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+The easiest method of approximating partial derivatives
+∇xiF uses the ﬁnite difference quotient
+∇xiF(x) ≈ F (x + h · ei) − F (x)
+h
+,
+(5)
+for the Cartesian basis vector ei ∈ Rn and with x ∈ Rn,
+h → 0. In order to accumulate the Jacobian of a multivari-
+ate function the method is rerun n times to perturb each
+component of the input vector x. The main advantage of
+this method resides in its straightforward implementation;
+no additional changes to the code of the function F are nec-
+essary. However, the derivatives accumulated through ﬁnite
+differences are only approximations. This represents a major
+drawback for codes that simulate highly nonlinear systems,
+resulting in truncation and cancellation errors or simply
+providing wrong results. In particular by applying the Taylor
+expansion to the second-order centered difference quotient
+we derive a machine precision induced approximation error
+of
+ǫ
+h2 , with ǫ being the rounding error.
+AD [6] solves this problem analytically, changing the un-
+derlying code to compute derivatives by applying symbolic
+differentiation rules to individual assignments and using the
+chain rule to propagate derivatives along the ﬂow of control.
+The achieved accuracy only depends on the machine’s pre-
+cision ǫ. There exist two distinct derivative models, differing
+in the order of application of the associative chain rule. Let
+∇F be the Jacobian of F. The tangent-linear code
+F
+
+to one and all (˙vi)k̸=i≺j to zero. The gradient component
+( ∂y
+∂xk )k∈{0,...,n−1} is obtained by evaluating (9) and setting
+˙xk to one and all other ( ˙xi)k̸=i∈{0,...,n−1} to zero. To get
+the whole gradient we have to evaluate (9) n times letting
+˙x range over the Cartesian basis vectors in Rn. The adjoint
+model is acquired by transforming (8) into:
+for j = n, . . . , n + p
+vj = ϕj(vi)i≺j
+for i ≺ j and j = n + p, . . . , n
+¯vi = ¯vi + ∂ϕj
+∂vi
+(vk)k≺j · ¯vj
+.
+(10)
+The ﬁrst part consists of the original assignments j =
+n, . . . , n + p and is called forward section. The reverse
+section follows with the computation of the adjoint variables
+in the order j = n+p, . . . , n. Note the reversed order of the
+assignments as well as the changed data ﬂow of the left and
+right-hand sides compared with the original assignments. To
+compute the local gradient ( ∂ϕj
+∂vk )k≺j we have to initialize
+(¯vi)i≺j with zero and ¯vj with one. The initialization with
+zero is mandatory because (¯vi)i≺j occurs in (10) on both
+sides of the adjoint assignment. According to (7), the adjoint
+variable ¯vj is an input variable. Therefore it is initialized
+with the Cartesian basis vector in R.
+The important advantage of the adjoint model is that by
+evaluating (10) only once we obtain the full gradient
+∂y
+∂x
+in ¯xi = ¯vi for i = 0, . . . , n − 1. To achieve this we have
+to initialize (¯xi)i=0,...,n−1 with zero and ¯y with one. As
+mentioned above ¯x must be zero because it occurs not only
+on the left-hand side in (7) and y is initialized with the value
+of the Cartesian basis vector in R.
+In (8), we assumed that the input code is given as a
+SAC. This is an oversimpliﬁcation in terms of real codes.
+The adjoint code has to deal with the fact that real code
+variables are overwritten frequently. One way to simulate the
+predicate of unique intermediate variables is to store certain
+left-hand side variables on a stack during the augmented
+forward section. Candidates for storing on the stack are
+those variables that are being overwritten and are required
+for later use during the computation of the local gradients
+and associated adjoints. Before evaluating the corresponding
+adjoint assignment in the reverse section the values are
+restored from the stack.
+For illustration purposes we consider Listing 1 show-
+ing
+an
+implementation
+of
+the
+non-linear
+reduction
+y(x) = Qn−1
+i=0 sin(xi). dcc parses only functions with void
+as a return type (line 1). All inputs and return values are
+passed through the arguments, which in turn only consist
+of arrays (called by pointers) and scalar values (called by
+reference). Additionally we may pass an arbitrary number of
+integer arguments by value or by reference. We assume that
+all differentiable functions are implemented using values of
+type double. Therefore, only variables of type double are
+1
+void t1
+f ( in t n ,
+double∗ x ,
+double∗ t1 x
+2
+, double& y ,
+double& t1 y )
+3
+{
+4
+. . .
+5
+for ( in t
+i =0; i<n ; i ++) {
+6
+y=y∗ sin ( x [ i ] ) ;
+7
+t1 y=t1 y∗ sin ( x [ i ] ) +y∗cos ( x [ i ] ) ∗t1 x [ i ] ;
+8
+}
+9
+. . .
+10
+}
+Listing 2: Tangent-linear version of f as generated by dcc
+1
+for ( in t
+i =0;
+i<n ; i ++) {
+2
+t1 x [ i ]=1;
+3
+t1
+f (n , x ,
+t1 x , y ,
+t1 y ) ;
+4
+gradient [ i ]= t1 y ;
+5
+t1 x [ i ]=0;
+6
+}
+Listing 3: Driver for t1 f
+directly affected by the differentiation process.
+1
+void
+f ( in t n ,
+double ∗x ,
+double &y )
+2
+{
+3
+in t
+i =0;
+4
+y=0;
+5
+for ( i =0; i<n ; i ++) {
+6
+y=y∗ sin ( x [ i ] ) ;
+7
+}
+8
+}
+Listing 1: dcc input code.
+Using the command line dcc f.c -t, we instruct the
+compiler to use the tangent-linear (-t) mode in order to
+generate the function t1 f (tangent-linear, 1st-order version
+of f) presented in Listing 2. The original function arguments
+x and y are augmented with their associated tangent-linear
+variables t1 x and t1 y. Inside a driver program this code has
+to be rerun n times letting the input vector t1 x range over
+the Cartesian basis vectors in Rn to accumulate the entire
+gradient. Listing 3 shows how to use the generated code of
+Listing 2 in a driver program. Lines 2 and 5 let input variable
+t1 x range over the Cartesian basis vectors. By setting t1 x[ i ]
+to 1 the function t1 f (line 3) computes the partial derivative
+of y with respect to x[ i ].
+The command line dcc f.c -a tells dcc to apply
+the adjoint mode (-a) to f.c. The result is the function
+a1 f (adjoint, 1st-order version of f) shown in Listing 4.
+As in the tangent-linear case each function argument is
+augmented by an associated adjoint component, here a1 x
+and a1 y. As mentioned above we need a stack in the
+adjoint code for storing data during the forward section.
+The augmented forward section uses stacks to store values
+that are being overwritten and to store the control ﬂow. The
+actual implementation of the stack is not under consideration
+here; therefore we replaced the calls to the stacks with macro
+deﬁnitions for better readability. By default, dcc generates
+29
+International Journal on Advances in Software, vol 5 no 1 & 2, year 2012, http://www.iariajournals.org/software/
+2012, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+code that uses static arrays, which ensures high runtime
+performance. There are three different stacks used in the
+adjoint code. The stack called CS is for storing the control
+ﬂow, FDS takes ﬂoating point values and IDS keeps integer
+values. The unique identiﬁer of the two basic blocks [9] in
+the forward section are stored in lines 6 and 9. For example,
+after evaluating the augmented forward section of Listing 4,
+the stack CS contains the following sequence
+0, 1, . . ., 1
+| {z }
+n times
+(11)
+In line 10, variable y is stored onto the stack because it
+is overwritten in each iteration although needed in line 21.
+Hence, we restore the value of y in line 20. For the same
+reason we store and restore the value of i in line 11 and
+19. The reverse section consist of a loop that processes
+the control ﬂow stack CS. The basic block identiﬁers are
+restored from the stack and depending on the value, the
+corresponding adjoint basic block is executed. For example,
+the sequence given in (11) as content in the CS stack leads
+to a n-times evaluation of the adjoint basic block one and
+afterward one evaluation of the adjoint basic block zero.
+The basic block one in line 9 to 11 has the corresponding
+adjoint basic block in line 19 to 22. In contrast to (7), in
+line 22 the adjoint a1 y is not incremented but assigned.
+This is due to the fact that y is on both hand sides of
+the original assignment in line 10. This brings an aliasing
+effect into play. This effect can be avoided with help of
+intermediate variables; making this code difﬁcult to read.
+For that reason we show the adjoint assignment without
+intermediate variables. dcc generates adjoint assignments
+with intermediate variables and incrementation of the left-
+hand side as shown in (7). The dcc-generated code and the
+one shown here are semantically equivalent. To accumulate
+the gradient using the function a1 f, we again have to write
+a driver, presented in Listing 5. It is sufﬁcient to initialize
+the adjoint variable a1 y and call the adjoint function a1 f
+only once to get the whole gradient (line 2), illustrating the
+reduced runtime complexity of the adjoint mode.
+1
+a1 y=1;
+2
+a1 f (n ,
+x , a1 x , y ,
+a1 y ) ;
+3
+for ( in t
+j =0;
+j<n ; j ++)
+4
+gradient [ j ]= a1 x [ j ] ;
+Listing 5: Driver for a1 f
+IV. HIGHER ORDER DIFFERENTIATION
+Numerical optimization algorithms often involve higher-
+order derivative models. Thus, the need for Hessians is
+imminent. With this in mind, dcc was designed to generate
+higher-order derivative codes effortlessly using its reappli-
+cation feature. dcc is able to generate jth-order derivative
+code by reading (j −1)th-order derivative code as the input.
+In this section we will focus on second-order models.
+1
+void a1 f ( in t n ,
+double∗ x ,
+double∗ a1 x ,
+2
+double& y ,
+double& a1 y )
+3
+{
+4
+in t
+i =0;
+5
+/ /
+augmented forward
+section
+6
+CS PUSH(0 ) ;
+7
+y=0;
+8
+for
+(
+i =0;
+i<n ;
+i ++) {
+9
+CS PUSH(1 ) ;
+10
+FDS PUSH( y ) ;
+y=y∗ sin ( x [ i ] ) ;
+11
+IDS PUSH( i ) ;
+12
+}
+13
+/ /
+reverse
+section
+14
+while (CS NON EMPTY) {
+15
+i f
+(CS TOP==0) {
+16
+a1 y=0;
+17
+}
+18
+i f
+(CS TOP==1) {
+19
+IDS POP( i ) ;
+20
+FDS POP( y ) ;
+21
+a1 x [ i ]+=y∗cos ( x [ i ] ) ∗a1 y ;
+22
+a1 y=sin ( x [ i ] ) ∗a1 y ;
+23
+}
+24
+CS POP;
+25
+}
+26
+}
+Listing 4: Adjoint dcc output
+The tangent-linear mode reapplied to the ﬁrst-order
+tangent-linear code (6) with m = 1 for scalar functions
+yields the second-order tangent-linear code
+˙F
+
+models. We may either apply the adjoint model to the
+tangent-linear code or apply the adjoint mode to the adjoint
+code. We will focus on the model where tangent-linear mode
+is applied to the adjoint code, called tangent-linear over
+adjoint mode.
+This time the adjoint code (7) is taken as the input for the
+reapplication of the tangent-linear mode, obtaining
+¯F
+
+ing at each function call. Each function needs to be able to
+store and restore its arguments.
+We ﬁrst start by calling f in augmented forward mode
+. If a function runs in augmented forward mode it will
+make subcalls in store mode
+. Store mode results in g
+storing its arguments (down arrow) and running the original
+code of g (right arrow), which itself calls the original code
+of h (right arrow).
+The reverse mode of f calls g in restore mode
+.
+g restores its arguments and runs in augmented forward
+mode leading to h called in store mode. In joint reversal
+the forward section is immediately followed by the reverse
+section. So g starts its reverse section resulting in h called in
+restore mode. h restores its arguments and starts its forward
+section followed by the reverse section. After h has returned,
+g ﬁnished its reverse section, which eventually leads to f
+ﬁnalizing its reverse section.
+By joining the forward and reverse section, the values
+that are pushed on the stack in the forward section are
+being popped from the stack in the following reverse section.
+This has two beneﬁts. For one, memory access is struc-
+turally more local leading to a more efﬁcient exploitation
+of cache memory. Additionally, memory consumption is
+signiﬁcantly reduced since interprocedural code consumes
+far less memory than the sum of all the push operations. In
+split reversal we had two ways of calling a function whereas
+in joint reversal we have three; store, restore+augmented
+forward and reverse mode. We now compare the two reversal
+schemes along the call graph presented in Figure 1.
+For the sake of simplicity, we assume that the original
+function evaluation, the forward section and the reverse
+section of f,g and h have each a computational cost of 1.
+Additionally, we assume that all the pushes of a function’s
+forward section have a memory consumption of 1. Finally,
+we assume that storing the arguments of a function has
+no additionally memory footprint. Taking all of this into
+account we now compare the two reversal schemes on the
+call graph presented in Figure 1.
+Split reversal runs all three functions in their forward and
+reverse section. So we end up with a computational cost
+of six. All the forward sections are called after each other,
+therefore the memory consumption is three.
+In joint reversal after f has ﬁnished its forward section
+we have a memory consumption of 1. Only the values of f
+have been pushed on the stack. We assume that g is called
+in the middle of f. So half of the values were popped from
+the stack at the moment when g is called in restore mode
+(memory=0.5). When g ends its forward section, memory
+consumption is at 1.5. Assuming that h is called in the
+middle of g we end up with a peak memory consumption
+of 2 after the forward section of h. The computational cost
+amounts to the number of squares in the picture, which is
+equal to 9.
+In general, joint reversal is a trade off between memory
+consumption and computational cost. Memory consumption
+is reduced by a third from 3 to 2 whereas the computation
+cost has risen by ﬁfty percent from 6 to 9. There has been
+more investigations into the mixing of these two strategies.
+[10] shows that the optimal reversal strategy is NP-complete.
+dcc uses joint reversal as its sole reversal scheme putting
+the emphasis on memory efﬁcient code. In the next chapter
+we will demonstrate how we exploit this feature to achieve a
+more efﬁcient memory footprint for our Burgers simulation.
+VI. BURGERS IMPLEMENTATION
+As has been described in Section I we compute the ve-
+locity ﬁeld according to (2). We use dynamic programming
+by introducing a data array u[i ][ j ] storing the velocity for a
+grid point i in time step j. The function h implementing the
+computation of the velocity ﬁeld has the following signature:
+1
+void h ( in t& nx ,
+/ /
+number of
+g ri d
+points
+2
+in t
+t0 ,
+/ /
+f i r s t
+time step
+to
+s t a r t
+with
+3
+in t n ,
+/ /
+number of
+time
+steps
+to
+compute
+4
+double& cost ,
+/ /
+cost
+fu n cti o n
+5
+double∗∗ uob ,
+/ /
+observations
+6
+double∗∗ ub ,
+/ /
+basic
+states
+7
+double∗∗ u ,
+/ /
+model
+so l u ti o n s
+8
+double∗ ui ,
+/ /
+i n i t i a l
+conditions
+9
+double& dx ,
+/ /
+space increment
+10
+double& dt ,
+/ /
+time increment
+11
+double& r ,
+/ /
+Reynolds number
+12
+double& dtdx ,
+13
+double& c0 ,
+14
+double& c1
+15
+)
+Listing 6: Function h
+This function computes u[i ][ j ] and updates cost for all grid
+points xi, 0 ≤ i < nx and for all time steps t0 ≤ j < n.
+Supposing that for each time step we need do c·nx pushes on
+the stack, we end up with approximately c·nx ·n pushes for
+the entire simulation. This is also the memory consumption
+for calling the adjoint code a1 h.
+The code will now be restructured according to a recursive
+checkpointing scheme by relying on the interprocedural joint
+reversal mode present in dcc.
+1
+void h ( . . . )
+{
+2
+. . .
+3
+h a l f =n−t0 / 2 ;
+4
+t1=t0+ h a l f ; n0=t1 ; n1=n ;
+5
+i f ( d i f f > 2) {
+6
+g ( nx , t0 , n0 , cost , uob , ub , u , ui , dx , dt , r ,
+dtdx , c0 , c1 ) ;
+7
+g ( nx , t1 , n1 , cost , uob , ub , u , ui , dx , dt , r ,
+dtdx , c0 , c1 ) ;
+8
+}
+9
+else
+10
+h ( nx , t0 , n , cost , uob , ub , u , ui , dx , dt , r ,
+dtdx , c0 , c1 ) ;
+11
+}
+Listing 7: Function h
+32
+International Journal on Advances in Software, vol 5 no 1 & 2, year 2012, http://www.iariajournals.org/software/
+2012, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+a1 h
+a1 h
+a1 g
+a1 g
+a1 g
+a1 f
+a1 h
+a1 h
+a1 g
+a1 g
+a1 g
+a1 f
+(a) Call graph of a1 f
+a1 h
+a1 g
+a1 h
+a1 g
+a1 h
+a1 h
+a1 g
+a1 h
+a1 g
+a1 h
+a1 g
+(b) Call graph of a1 f (cont.)
+Figure 2: Burgers recursive call tree joint reversal
+g has the same signature as h. Its task is to decompose the
+interval of time steps, calling h on a subinterval of [t0, n].
+The resulting call tree as well as its joint reversed coun-
+terpart is illustrated in Figure 2.
+We assume that the h has a computational cost of 1 over
+the entire interval from t0 to n. If we call h in over the entire
+interval we end up with a forward and a reverse section
+adding up to a computational cost of 2. In our new structure
+we assume that f and g have no computational cost and
+no memory consumption. In our example h has a cost of 1
+2
+since it only runs over half the interval of t0 to n. We call h
+10 times. Thus the computational cost of this call tree is 5.
+Note that this is independent from the depth of our recursive
+call tree. The memory consumption though is halved at every
+increase of the recursive call three depth. Ultimately memory
+consumption can be reduced to the number of pushes in one
+single time step.
+VII. CASE STUDY
+A. Differentiation of the original code
+As discussed in Section I, we run a test case on an inverse
+problem based on Burgers’ equation (1). As a start we take
+the code presented in [3] implementing the original function
+with the signature of
+Table I: Time and memory requirements for gradient com-
+putation
+n
+250
+500
+1000
+2000
+f (s)
+0.03
+0.08
+0.15
+0.32
+TLM (s)
+33
+109
+457
+1615
+ADJ (s)
+0.21
+0.43
+0.85
+1.82
+TLM-ADJ (s)
+150
+587
+2286
+8559
+IDS size
+7500502
+15001002
+30002002
+60004002
+FDS size
+5000002
+10000002
+20000002
+40000002
+CS size
+7500503
+15001003
+30002003
+60004003
+1
+void
+f ( i n t
+n ,
+i n t
+nt ,
+double& cost , double∗∗
+u ,
+double∗ ui . . . )
+2
+{
+3
+. . .
+4
+}
+Listing 8: Signature of Burgers’ function
+Taking n grid points of ui as the initial conditions we
+integrate over nt timesteps. The values are saved in the two
+dimensional array u for each grid point i and time step j.
+To solve the inverse problem we need the derivatives of
+cost with respect to the initial conditions ui.
+The results in Table I represent the runtime of one full
+gradient accumulation as well as the memory requirements
+in adjoint and tangent-linear mode. Additionally one Hessian
+accumulation is performed using the tangent-linear over
+adjoint model (13). Different problem sizes are simulated
+with varying n. We also mention the different stack size
+shown in Section III.
+If we assume four bytes per integer and control stack
+element plus eight bytes for a ﬂoating data stack element
+we end up with a memory requirement of ≈ 610 MB for
+the Hessian accumulation. The tests were running on a
+GenuineIntel computer with Intel(R) Core(TM)2 Duo CPU
+and with 2000.000 MHz CPU.
+The execution time of the tangent-linear gradient compu-
+tation is growing proportionally to the problem size nx and
+the execution time of f:
+FM : cost(F ′)
+cost(F) ∼ O(n).
+(14)
+The single executon of t1 f takes approximately twice as
+long as the execution of f.
+The execution time of the adjoint gradient computation is
+growing only proportional to the execution time of f:
+AM : cost(F ′)
+cost(F) ∼ O(1).
+(15)
+Finally we accumulate the Hessian using tangent-linear
+over adjoint mode. Here, the runtime is growing linearly
+with respect to n as well as f since the dimension of the
+dependent cost is equal to 1.
+FM − AM : cost(F ′′)
+cost(F) ∼ O(n).
+(16)
+33
+International Journal on Advances in Software, vol 5 no 1 & 2, year 2012, http://www.iariajournals.org/software/
+2012, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+Table II: Recursive checkpointing with n = 100000. Interval
+size of 100000 amounts to no recursion.
+Interval size
+FDS size
+Runtime(s)
+100000
+29999610
+69,3
+10000
+2062706
+74,9
+1000
+433242
+76,5
+100
+229410
+79,1
+10
+202292
+88,3
+For scalar functions in particular, the runtime complexity
+for accumulating the Hessian using AD is the same as the
+runtime complexity of the gradient accumulation using ﬁnite
+difference. This enables developers to implement a second-
+order model where a ﬁrst-order model has been used so far.
+B. Differentiation using recursive checkpointing
+Based on the recursive checkpointing scheme presented
+in Section V and its implementation in Section VI we
+conducted benchmarks varying the interval size threshold for
+diff where the recursion of g will stop by eventually calling
+h. The ﬁrst order adjoint model was applied to compute a
+single gradient accumulation. The benchmarks were run on a
+cluster node consisting of a single thread on a Sun Enterprise
+T5120 cluster.
+At an interval size of 100 we see major memory savings
+of around 98% whereas the runtime is only marginally
+increased by around 15% from 69,3s to 79,1s. This illustrates
+that checkpointing is crucial to reduce a computational prob-
+lem in memory space while keeping the runtime complexity
+at a feasible level.
+VIII. CONCLUSION & FUTURE WORK
+We have presented a source transformation compiler for
+a restricted subset of C/C++. As such, dcc runs on any
+system with a valid C/C++ compiler making it a very
+portable tool. Its unique reapplication feature allows code
+to be transformed up to an arbitrary order of differenti-
+ation. While relying to the adjoint model for the higher-
+order differentiation, we save one order of magnitude of
+computational cost compared to a tangent-linear only or
+ﬁnite difference code. However, the adjoint model poses
+a high memory load, making an efﬁcient checkpointing
+scheme crucial. Otherwise, a computation for large scale
+codes is even unfeasible. This is solved by resorting to
+interprocedural checkpointing, enabled by the joint reversal
+structure of the generated adjoint code. We illustrated the
+entire development process along a case study based on a
+one-dimensional implementation of the Burgers equation.
+Not mentioned in this paper are several extensions not
+directly linked to the derivative code compiler presented
+here. As large simulation codes run on cluster systems, they
+mostly rely on parallelization techniques. The most widely
+used parallelization method is MPI. Hence, while applying
+the adjoint mode all the MPI calls need to be reversed too
+[11]. This feature has been integrated into dcc using an
+adjoint MPI library [12]. Additionally there are attempts to
+achieve the same goal with OpenMP [13]. For the sake of
+brevity we also did not mention the program analysis dcc
+performs like for example activity and TBR analyses [14].
+The compiler is open-source software (Eclipse Public
+License) and available upon request. This paper should serve
+as ﬁrst guideline on how to differentiate C code using this
+tool.
+Finally, the development of dcc is largely application
+driven, especially with regard to its ability in parsing the
+entire C/C++ language.
+REFERENCES
+[1] M. Schanen, M. Foerster, B. Gendler, and U. Naumann,
+“Compiler-based Differentiation of Numerical Simulation
+Codes,” in ICCGI 2011, The Sixth International Multi-
+Conference on Computing in the Global Information Tech-
+nology.
+IARIA, 2011, pp. 105–110.
+[2] D. Zwillinger, “Handbook of Differential Equations, 3rd ed,”
+Boston, MA, p. 130, 1997.
+[3] E. Kalnay, “Atmospheric Modeling, Data Assimilation and
+Predictability,” 2003.
+[4] T. Kelley, Solving Nonlinear
+Equations
+with Newton’s
+Method, ser. Fundamentals of Algorithms.
+Philadelphia, PA:
+SIAM, 2003.
+[5] A. Tikhonov, “On the Stability of Inverse Problems,” Dokl.
+Akad. Nauk SSSR, vol. 39, no. 5, pp. 195–198, 1943.
+[6] A. Griewank and A. Walter, Evaluating Derivatives. Prin-
+ciples and Techniques of Algorithmic Differentiation (2nd
+Edition).
+Philadelphia: SIAM, 2008.
+[7] G. Corliss and A. Griewank, Eds., Automatic Differentiation:
+Theory, Implementation, and Application, ser. Proceedings
+Series.
+Philadelphia: SIAM, 1991.
+[8] G. Corliss, C. Faure, A. Griewank, L. Hasco¨et, and U. Nau-
+mann, Eds., Automatic Differentiation of Algorithms – From
+Simulation to Optimization.
+New York: Springer, 2002.
+[9] A. Aho, M. Lam, R. Sethi, and J. Ullman, Compilers.
+Principles, Techniques, and Tools (Second Edition). Reading,
+MA: Addison-Wesley, 2007.
+[10] U. Naumann, “DAG Reversal is NP-complete,” Journal of
+Discrete Algorithms, vol. 7, no. 4, pp. 402–410, 2009.
+[11] P. Hovland and C. Bischof, “Automatic Differentiation for
+Message-Passing Parallel Programs,” in Parallel Processing
+Symposium, 1998. IPPS/SPDP 1998. Proceedings of the First
+Merged International ... and Symposium on Parallel and
+Distributed Processing 1998, mar-3 apr 1998, pp. 98 –104.
+[12] M. Schanen, U. Naumann, and M. Foerster, “Second-Order
+Adjoint Algorithmic Differentiation by Source Transforma-
+tion of MPI Code,” in Recent Advances in the Message Pass-
+ing Interface, Lecture Notes in Computer Science.
+Springer,
+2010, pp. 257–264.
+34
+International Journal on Advances in Software, vol 5 no 1 & 2, year 2012, http://www.iariajournals.org/software/
+2012, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+[13] M. Foerster, U. Naumann, and J. Utke, “Toward Adjoint
+OpenMP,”
+RWTH
+Aachen,
+Tech.
+Rep.
+AIB-2011-13,
+Jul. 2011. [Online]. Available: http://aib.informatik.rwth-
+aachen.de/2011/2011-13.ps.gz
+[14] L. Hasco¨et, U. Naumann, and V. Pascual, “To-be-recorded
+Analysis in Reverse Mode Automatic Differentiation,” Future
+Generation Computer Systems, vol. 21, pp. 1401–1417, 2005.
+35
+International Journal on Advances in Software, vol 5 no 1 & 2, year 2012, http://www.iariajournals.org/software/
+2012, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+

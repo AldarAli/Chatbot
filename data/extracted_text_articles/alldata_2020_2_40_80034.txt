@@ -1,0 +1,982 @@
+An Overview of Arithmetic Adaptations for
+Inference of Convolutional Neural Networks on
+Re-configurable Hardware
+Ilkay Wunderlich
+Institute of Computer Engineering
+Technische Universität Dresden
+Dresden, Germany
+email: ilkay.wunderlich@tu-dresden.de
+Benjamin Koch
+AVI Systems
+Freital, Germany
+email: benjamin.koch@avi-systems.eu
+Sven Schönfeld
+AVI Systems
+Freital, Germany
+email: sven.schoenfeld@avi-systems.eu
+Abstract—Convolutional Neural Networks (CNNs) have gained
+high popularity as a tool for computer vision tasks and for
+that reason are used in various applications. There are many
+different concepts, like single shot detectors, that have been
+published for detecting objects in images or video streams. How-
+ever, CNNs suffer from disadvantages regarding the deployment
+on embedded platforms such as re-configurable hardware like
+Field Programmable Gate Arrays (FPGAs). Due to the high
+computational intensity, memory requirements and arithmetic
+conditions, a variety of strategies for running CNNs on FPGAs
+have been developed. The following methods showcase our
+best practice approaches for a TinyYOLOv3 detector network
+on a XILINX Artix-7 FPGA using techniques like fusion of
+batch normalization, filter pruning and post training network
+quantization.
+Keywords—convolutional neural network; image processing; re-
+configurable hardware; batchnorm fusing; pruning; quantization;
+I. Iඇඍඋඈൽඎർඍංඈඇ
+This section introduces the historic background of Single
+Shot Detectors (SSDs) and the challenges of implementing
+CNNs on reconfigurable hardware. Afterwards, the general
+“life” of neural networks is explained and expanded with the
+adaptation stage.
+A. Single shot detector network
+After the success of Convolutional Neural Networks
+(CNNs) for image classification, object detection stepped into
+the focus of research. A first brute force approach used sliding
+windows throughout the image with a classification network.
+This strategy limits itself to the granularity of the window size
+and window strides.
+With Region-based Convolutional Neural Networks (RC-
+NNs) a more sophisticated tool for object detection was
+presented. The RCNN itself contains two CNNs, which are
+solving the tasks of detecting objects of interest and classifying
+the found objects [1].
+The first SSD was published by Joseph Redmon et al. with
+the iconic name You Only Look Once (YOLO) [2] [3]. The
+first version was supplemented by two updates: YOLO9000,
+which is also known as YOLOv2 [4] and the most recently
+YOLOv3 [5]. Additionally to the YOLO versions smaller
+versions, named TinyYOLOvX, are provided. The main focus
+for the following elaborations is put on the TinyYOLOv3
+architecture, which optimises the trade off between detection
+performance and computational effort.
+B. Challenges on re-configurable hardware
+Implementing CNN on re-configurable hardware introduces
+several constraints, that affect the architecture of the used
+networks as well as the underlying arithmetic operations,
+memory access and scheduling of operations.
+Using state of the art Field Programmable Gate Arrays
+(FPGAs), e.g., XILINX Artix-7, only fixed-point arithmetic
+can be implemented in an efficient way, so quantization of the
+network model will be necessary. Because of that, choosing
+quantization factors and a proper format for intermediate
+results to keep the deviation regarding the fixed-point model
+as low as possible is a key consideration to adapt a model for
+hardware inference.
+The most challenging constraint is the limited number of
+logic elements to implement the building blocks of the CNN.
+Dissecting the parts of the neural network in candidates for
+hardware and software implementation is a key consideration
+to be made in the system architecture. Since FPGAs typically
+have little on-chip memory an efficient way to access memory
+has to be part of the architecture design as well. Also, the
+typical lower clock frequency in re-configurable hardware
+adds another trade-off.
+This leads to the conclusion that a general purpose acceler-
+ator is hard to design. Every use case and neural network
+should be analysed according to needed performance and
+target platform.
+C. Adaptation Stage
+The “life” of any neural network can be categorized into
+two stages: training and inference stage. At the training stage
+the neural network gets trained for its later task using labelled
+data, which gets divided into training and test sets. A variety
+34
+Copyright (c) IARIA, 2020.     ISBN:  978-1-61208-775-7
+ALLDATA 2020 : The Sixth International Conference on Big Data, Small Data, Linked Data and Open Data
+
+of optimization techniques exists for the training stage. For
+example, one common target of optimizing the training stage
+aims on reducing the amount of needed iterations to reach the
+global minimum of the loss function. Several machine learning
+libraries implement optimizers for speeding up training, like
+Root Mean Square Propagation (RMSprop) [6] or Adaptive
+Moment Estimation (ADAM) [7].
+The inference stage is the application of the neural network,
+after it is properly trained. Adaptations to the network might
+be needed, depending on the hardware platform on which the
+inference stage takes place. The entirety of the adaptation work
+flow is summarized as the adaptation stage.
+In section II and III, two optional but very useful adaptation
+steps are introduced. In Section IV, the mandatory adaptation
+of switching the arithmetic backbone of the network from
+floating point to fix point operations is presented. The benefits
+of these techniques are summarized in section V.
+II. Bൺඍർඁඇඈඋආ Fඎඌංඇ඀
+In this section, the concept of batch normalization and the
+general layout of a convolution layer are briefly explained.
+Thereafter, formulae and results of eliminating the batch
+normalization layer are given.
+A. Background of Batch Normalization
+Batch normalization [8], which is often times abbreviated
+with batchnorm, is a sub layer used to reduce internal covariate
+shifts. These shifts are defined as changes in the distribution of
+the network’s activation, which are caused by changes in the
+parameters of the network during training stage. Diminishing
+the covariate shift enables higher learning rates, reduces the
+risk of getting stuck in poor local minima and prevents
+vanishing or exploding gradients. Another advantageous side
+effect of batch normalization is the increased generalization
+ability of the network [8]. Many modern networks are using
+batchnorm sub layers, e.g., YOLOv3 [5], MobileNet [9] and
+ResNet [10].
+The batch normalization sub layer is located between the
+convolutional layer and the activation sub layer which is
+illustrated for layer i in Figure 1.
+Layer i
+conv
+layer
+batchnorm
+sub layer
+activation
+sub layer
+pooling
+sub layer
+Layer i-1
+Layer i+1
+Feature
+Maps
+Activation
+Maps
+Z[i]
+A[i]
+Z[i]
+bn
+A[i-1]
+A[i]
+Fig. 1. Example of a general convolutional layer (abbreviated with conv) with
+its subsequent batchnorm, activation and pooling sub layer and their output
+descriptions.
+This sub layer contains a set of up to four parameters:
+1) Mini-Batch Mean:
+The mini-batch mean µ[i] is measured regarding the
+mean of the feature maps of the current mini-batch
+B[i] =
+n
+z[i]
+1 , ..., z[i]
+m
+o
+at each batchnorm sub layer i in
+the network. This metric gets updated for each mini-
+batch and epoch during the training stage:
+µ[i] ← 1
+m ·
+m
+X
+j=0
+B[i]
+(1)
+2) Mini-Batch Variance:
+Similar to mini-batch mean with respect to the variance
+of the current mini-batch:
+σ2[i] ← 1
+m ·
+m
+X
+j=0
+(B[i] − µ[i])2
+(2)
+3) Scale:
+Trained scaling term γ[i], which is an optional and
+trainable component of the batchnorm sub layer.
+4) Shift:
+Trained shifting term β[i], which is an optional and
+trainable component of the batchnorm sub layer as well.
+Commonly used instead of bias parameters b in the
+convolutional layer.
+The batchnorm parameters are one dimensional vectors, which
+are applied to each feature map from the previous convolu-
+tional layer separately. The amount of elements is determined
+by the amount of filters used in the conv layer. The forward
+propagation step for the batchnorm sub layer is given in (3):
+Z[i]
+bn = BN(Z[i]) = γ[i] · Z[i] − µ[i]
+p
+| σ2[i] + ϵ
+{z
+}
+normalization
++β[i]
+(3)
+where ϵ is a small scalar value added to the variance to provide
+numerical stability (e.g., keras default: ϵ = 0.001 [11]).
+B. Fusion of Batchnorm Parameters into Convolutional Pa-
+rameters
+In order to get rid of the computational effort of the
+batch normalization sub layer, it is recommended to fuse
+the batchnorm parameters into the convolutional parameters
+before entering the inference stage. To derive the formulae for
+batchnorm fusing, the kernel convolution, which is performed
+filter-wise in the convolutional layer is introduced for layer i:
+Z[i] = Conv
+
+A[i−1]; W [i], b[i]
+= A[i−1] ∗ W [i] + b[i]
+(4)
+where
+A[i−1]
+denotes
+the
+three
+dimensional
+activation
+map from the previous layer of matrix shape (w, h, c) -
+(width,height,color channels). W [i] is the filter matrix of shape
+(fw, fh, c) and b[i] represents the optional bias vector is shape
+(c, 1). For easier reading, the layer indices ()[i] are skipped
+in the following arguments with hinting A[i−1] as Aprev. It
+can be shown, that the convolution operation Conv(A; W, b)
+holds the following property:
+k · Conv (Aprev; W, b) + h = Conv (Aprev; k · W, k · b + h)
+(5)
+35
+Copyright (c) IARIA, 2020.     ISBN:  978-1-61208-775-7
+ALLDATA 2020 : The Sixth International Conference on Big Data, Small Data, Linked Data and Open Data
+
+for k, h = const. and k, h ∈ Rc. With (3),(4) and (5) the
+formulae for batchnorm fusing are derived as follows:
+Replacing Z[i] from (3) with (4):
+Zbn = γ · Conv (Aprev; W, b) − µ
+√
+σ2 + ϵ
++ β
+(6)
+Reordering to get the equation above to a similar form as
+shown in (5):
+Zbn =
+γ
+√
+| σ2 + ϵ
+{z
+}
+k
+·Conv (Aprev; W, b) + β −
+γ · µ
+√
+σ2 + ϵ
+|
+{z
+}
+h
+(7)
+which can be written as:
+Zbn = Conv
+
+Aprev;
+γ
+√
+σ2+ϵ · W,
+γ
+√
+σ2+ϵ · b + β −
+γ·µ
+√
+σ2+ϵ
+
+=
+(8)
+Conv
+
+Aprev;
+γ
+√
+σ2 + ϵ
+· W,
+γ
+√
+σ2 + ϵ
+· (b − µ) + β
+
+With (8) the formulae for the fused parameters Wbn, bbn are
+derived as:
+Wbn =
+γ
+√
+σ2 + ϵ
+· W
+(9)
+bbn =
+γ
+√
+σ2 + ϵ
+· (b − µ) + β
+(10)
+Zbn = Conv (Aprev; Wbn, bbn)
+(11)
+For convolution layers trained without biases (10) is reduced
+to:
+bbn = β −
+γ · µ
+√
+σ2 + ϵ
+(12)
+C. Benefits of Batchnorm fusing
+The emphasis for estimating the benefits of batchnorm
+fusing is shown with respect to the reduction of Floating
+Point Operations (FLOPS). In Figure 2, the amount of needed
+FLOPS for the first layers of a TinyYOLOv3 network without
+batchnorm fusing for an input image size of 416 × 416 × 3
+(width, height, color channels) is shown. This network requires
+approximately 5.5 GFLOPS for processing one image from the
+input layer to the output layers, excluding the processing steps
+in the YOLO back-end. After fusing the batchnorm parameters
+into the convolutional parameters, the FLOPS count is reduced
+by 23.8 MFLOPS.
+This decrease sounds low with a reduction factor of only
+0.4%. But more important is the avoidance of batchnorm sub
+layers as a whole, because each sub layer requires additional
+logic elements, complexity in the control loop and power.
+Another benefit is the preparation for pruning, which is
+performed on the fused weight matrices.
+III. Fංඅඍൾඋ Pඋඎඇංඇ඀
+The general concept of pruning and the proposed routine
+are presented. The results of pruning are displayed using
+parameter count and FLOPS as optimization target.
+conv_1
+bn_1
+conv_2
+bn_2
+conv_3
+bn_3
+conv_4
+bn_4
+conv_5
+bn_5
+conv_6
+bn_6
+conv_7
+bn_7
+conv_8
+bn_8
+conv_11
+bn_11
+conv_9
+conv_12
+bn_9
+bn_12
+conv_10
+conv_13
+105
+106
+107
+108
+109
+≈  5.5
+ GFLOPS
+≈  23.8
+ MFLOPS
+TinyYOLOv3
+FLOPS vs layers
+all FLOPS cumulative
+batchnorm FLOPS cumulative
+FLOPS per layer
+Fig. 2. Required FLOPS (y-axis, logarithmic) for all convolutional layer with
+their batchnorm sub layer (x-axis) for the TinyYOLOv3 architecture.
+A. Pruning Background
+In contrast to batch normalization being introduced in 2015,
+research on pruning of neural networks already started at the
+end of 1980s [12] and the beginning of 1990s [13]. The
+goal of pruning is reducing the network size by removing
+redundant connections while maintaining the performance of
+the network. M.C. Mozer and P. Smolensky pictorially call
+this technique as “trimming the fat from a network” [13]. In
+order to determine redundant connections several metrics are
+proposed in literature [14]. In the following, the emphasis is
+put on CNNs and particularly on pruning whole filters after
+batchnorm fusing.
+B. Pruning Metrics
+In this section, two metrics for determining filter candidates
+suitable for pruning are introduced. These metrics help finding
+filters fn of the weight matrix W, which have no or low
+impact for the forward propagation. The total amount of filters
+stored in the weight matrix W is denoted with nf. A trivial
+example for a prunable filter is one which coefficients are all
+zero (fn = 0).
+1) The Fඋඈൻൾඇංඎඌ Norm for filter fn is defined as the
+following scalar value:
+||fn||F =
+s X
+w,h,c
+(fn[w, h, c])2
+(13)
+This definition gets expanded for the whole weight
+matrix by stacking the norms of the all filters fn to
+one vector:
+||W||F =
+
+||f0||F , ..., ||fn||F , ..., ||fnf||F
+T
+(14)
+36
+Copyright (c) IARIA, 2020.     ISBN:  978-1-61208-775-7
+ALLDATA 2020 : The Sixth International Conference on Big Data, Small Data, Linked Data and Open Data
+
+2) The filter sparsity is a metric for determining the
+sparsity of a filter. It is defined as the percentage of
+values close to zero of a filter fn:
+Spϵ(fn) = 1 − C(|fn| < ϵ)
+C(fn)
+(15)
+where C(fn) denotes the cardinality of the filter fn (16)
+and C(|fn| < ϵ) the conditional cardinality of fn (17).
+C(fn) =
+X
+w,h,c
+1
+(16)
+C(|fn| < ϵ) =
+X
+w,h,c
+ 1,
+|f[w, h, c]| < ϵ
+0,
+|f[w, h, c]| ≥ ϵ
+(17)
+Similarly to (14) this equation is expanded to:
+Spϵ(W) = [Spϵ(f0), ..., Spϵ(fn), ..., Spϵ(fnf)]T (18)
+C. Pruning Routine
+The previously mentioned metrics are used in the proposed
+pruning routine, which is based on the following inputs:
+• The maximum deviation of Mean Average Precision
+(MAP): ∆MAP .
+• A representative pruning data set to continuously calcu-
+late the mean average precision.
+• An optional Starting threshold Tstart, which is 0 by
+default.
+• A value by which the threshold gets incremented δT :
+E.g., δT = 0.01.
+The pruning routine determines the chosen metric for every
+filter in the CNN, as well as the initial MAP of the network
+on the pruning data set beforehand. Afterwards every filter,
+which is below the threshold T, is removed and the MAP
+is calculated again. As long as deviation is lower than the
+maximum deviation ∆MAP , the threshold is incremented by
+δT . This procedure is repeated until ∆MAP is reached.
+After the pruning routine is finished, the possibility of
+additional training in order to slightly fine tune the remaining
+filters to reach the initial MAP is possible. It is advisable to
+perform the fine tuning with a low learning rate and early
+stopping to avoid over fitting of the network to the pruning
+data set.
+D. Pruning Result
+The following example is based on a TinyYOLOv3 network,
+which is trained on the TU Darmstadt Pedestrian Dataset [15].
+The original model, fused model, and the pruned example
+models as well as additional information are provided in a
+separate GitHub repository [16].
+The maximum deviation of MAP is set to ∆mAP = 1% and
+the threshold increment δT = 0.02. In Figure 3, the results of
+the pruning routine are shown using Fඋඈൻൾඇංඎඌ Norm ||W||F
+and filter sparsity Spϵ=0.003(fn) as the pruning metric. The
+results cover the total parameter and filter count of the CNN.
+It is notable that the parameter count decrease is higher than
+the decrease in filters. The reason is, that the higher the amount
+fused
+frob
+spars
+0
+2
+4
+6
+8
+106
+reference
+27.7%
+23.1%
+#parameters
+fused
+frob
+spars
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+103
+reference
+18.4%
+15.9%
+#filters
+Fig. 3.
+Pruning result showing for the TinyYOLOv3 network example
+comparing fused model (fused) and pruned model with Fඋඈൻൾඇංඎඌ Norm
+(fro) and Filter Sparsity (spars) as metric. Top of bar: reduction percentage or
+reference to it. Left: total parameter count. Right: filter count of the network.
+of filters in a layer i the more likely is to encounter prunable
+filters. The amount of parameters stored in such layers are
+way larger, because the previous layers i − 1 typically have
+higher filter counts as well. This behaviour is visualized for
+TinyYOLOv3 in Figure 4 by plotting the percentage of stored
+parameters per layer to the overall TinyYOLOv3 parameter
+count.
+conv1
+conv2
+conv3
+conv4
+conv5
+conv6
+conv7
+conv8
+conv11
+conv9
+conv12
+conv10
+conv13
+0
+20
+40
+60
+80
+100
+%
+parameter count in percent of overall parameters
+per layer
+cumulative
+Fig. 4. Percentage of parameters for each layer. Per layer and cumulative.
+With the reduction of the parameter count of approximately
+23.1% for Fඋඈൻൾඇංඎඌ and 27.7% for sparsity pruning a higher
+reduction of FLOPS can be observed compared to batchnorm
+fusing from Subsection II-C. The comparison of FLOPS re-
+duction percentages between original model (with batchnorm
+sub layers), fused model and pruned models is visualized in
+Figure 5. The reduction of FLOPS is 13.3% for Fඋඈൻൾඇංඎඌ
+and 15.7% for sparsity pruning compared to the original model
+with batchnorm sub layers.
+Conclusively, it has to be stated that a very high pruning
+result (e.g., > 80% of parameters pruned) needs more investi-
+gation. The CNN might either be oversized or not properly
+trained. In both cases, the filter weights are still close to
+the initialization. This leads to low values for the introduced
+metrics, which result in a huge amount of prunable filters.
+37
+Copyright (c) IARIA, 2020.     ISBN:  978-1-61208-775-7
+ALLDATA 2020 : The Sixth International Conference on Big Data, Small Data, Linked Data and Open Data
+
+orig
+fused
+frob
+spars
+4.0
+4.2
+4.4
+4.6
+4.8
+5.0
+5.2
+5.4
+5.6
+FLOPS
+1e9
+reference
+15.7%
+13.3%
+0.4%
+#FLOPS
+Fig. 5. FLOPS comparison (y-axis) for the TinyYOLOv3 network example.
+Reduction percentages (top of bar) using the “unfused” original model (orig)
+as reference.
+IV. Qඎൺඇඍංඓൺඍංඈඇ
+In this section, a method of changing the arithmetic back-
+bone from floating point to integer arithmetic is given and
+evaluated with investigating on the deviation between floating
+point CNN and integer CNN. In conclusion, other methods
+are mentioned and briefly explained.
+A. Background
+Training for CNNs is traditionally performed using 32 bit
+floating point arithmetic. The main reason is, that calculating
+the gradient during CNN training requires high value resolu-
+tion for which integer or fixed-point systems are insufficient.
+However, using floating point arithmetic on re-configurable
+hardware such as FPGAs for CNN inference comes with
+plenty of disadvantages: higher computation effort, more
+memory storage and increase of bus widths and counts. These
+disadvantages can be solved by using a quantized twin of the
+CNN with a minimal or no drop-off in inference accuracy.
+B. Quantization Approach
+A straight forward approach based on scaling the floating
+point values is proposed. This is realized by determining a
+positive whole-numbered scaling factor S, e.g., S = 256. It is
+advisable to select this factor from the set of powers of two
+S = 2P where P ∈ N, because integer division by a power
+of two becomes a right shift by the power of two P:
+X
+S = X
+2P = Rshift(X, P)
+P ∈ N
+(19)
+This is especially useful since the integer product Z
+=
+MULS(X1, X2) of two mapped operands Xi = xi·S requires
+a division by the scaling factor S to obtain Z = S·x1·x2+e =
+S · z + e where e denotes the quantization error:
+MulS(X, Y )
+|
+{z
+}
+=:Z
+= X · Y
+S
+S=2P
+== Rshift(X · Y, P) = S · x · y
+|{z}
+=:z
++e
+(20)
+Using shift operations instead of divisions spares hardware
+resources and reduces the combinatorial path, allowing a
+higher clock frequency of the hardware. With this background,
+the quantization approach can be introduced:
+• parameter and input quantization:
+Every parameter value V (floating point, usually 32 bit)
+of the CNN is quantized by multiplying with the scaling
+factor S and rounding to integer values. For this, the
+integer format int16 is used.
+Vquant = int16(round(V ∗ S))
+(21)
+The input A[0] is quantized similarly for every pixel value
+V ∈ A[0].
+• quantized convolution:
+The forward propagation of the convolution layer, which
+is split up into the filter convolution Conv and the bias
+addition Add, is adjusted by appending a right shift
+operator Rshift after the convolution step as illustrated
+in Figure 6. The convolution itself is performed using
+Quantized Convolution Layer i
+A[i-1]
+Conv
+Rshift
+Add
+int16
+W[i]
+          int16
+P
+          uint8
+b[i]
+            int16
+int32
+int16
+int16 A[i]
+int32
+int32
+int16
+Fig. 6.
+Quantized Convolution Layer i without pooling and activation sub
+layer.
+int32 range with expansion of the previous activation
+A[i−1] and the filter parameters W [i] to int32:
+A[i−1] ← int32(A[i−1])
+W [i] ← int32(W [i])
+A[i] ← Conv(A[i−1], W [i])
+After the right shift by P the format is reduced to int16
+and the bias b[i] is added:
+A[i] ← Rshift(A[i], P)
+A[i] ← int16(A[i])
+A[i] ← Add(A[i], b[i])
+• quantized activation function:
+An approved activation function for CNNs is the Leaky
+Rectified Linear Unit (ReLUα) as defined in (22) and
+shown in Figure 7.
+a = ReLUα(z) =
+ z,
+z > 0
+α · z,
+z ≤ 0
+(22)
+The value of the subscripted α is denoting the negative
+slope. Common values for α are 0.01, 0.2 and 0.3 (default
+values of Caffe2, Tensorflow and Keras). For α = 0 the
+Rectified Linear Unit (ReLU) without any “leakage” is
+obtained.
+38
+Copyright (c) IARIA, 2020.     ISBN:  978-1-61208-775-7
+ALLDATA 2020 : The Sixth International Conference on Big Data, Small Data, Linked Data and Open Data
+
+10
+8
+6
+4
+2
+0
+2
+4
+6
+z
+2
+0
+2
+4
+6
+8
+10
+a
+leaky rectified linear unit
+keras default: α = 0.3
+tensorflow default: α = 0.2
+caffe2 default: α = 0.01
+ReLU: α = 0
+Fig. 7. ReLUα for various α values.
+ReLUα is a suitable activation function for targeting
+embedded systems, since its computational effort com-
+pared to other activation functions like hyperbolic tangent
+tanh or sigmoid σ is low. In order to make it even more
+suitable, the negative slope α is chosen from the set of
+negative powers of two: α = 2−Pα where Pα ∈ N: E.g.,
+α = 2−4 = 0.0625.
+Analogously to the convolution quantization the multi-
+plication by α is rewritten using the right shift operator
+Rshift and the relationship from (19):
+α · z = 2−Pα · z =
+z
+2Pα = Rshift(z, Pα)
+(23)
+This simplifies (22) for integer arithmetic as follows:
+a = ReLUα(z) =
+ z,
+z > 0
+Rshift(z, Pα),
+z ≤ 0
+(24)
+• pooling:
+No adaptations are needed for transferring max pooling
+to integer arithmetic. For average pooling, further right
+shift simplifications can be made.
+C. Quantization Deviation
+The deviation between the trained floating point model and
+its quantized integer twin is estimated by the outputs of each
+convolution layer and the following sub layers (activation,
+pooling). The deviation is calculated using the Mean Squared
+Error (MSE) as metric:
+MSE(A[i]
+float, A[i]
+int) = 1
+N
+X
+v∈A[i]
+float
+w∈A[i]
+int
+
+v − w
+S
+2
+(25)
+with N denoting the number of elements (cardinality) of the
+compared arrays:
+N = C
+
+A[i]
+float
+
+= C
+
+A[i]
+int
+
+(26)
+with S being the scaling factor used for quantization.
+Figure 8 shows the layer-wise calculated MSE between
+floating point model and integer model using a scaling factor
+S = 28 = 256. The used network is the pruned version of the
+input
+conv_1
+relu_1
+pool_1
+conv_2
+relu_2
+pool_2
+conv_3
+relu_3
+pool_3
+conv_4
+relu_4
+pool_4
+conv_5
+relu_5
+pool_5
+conv_6
+relu_6
+pool_6
+conv_7
+relu_7
+conv_8
+relu_8
+conv_11
+relu_10
+conv_9
+conv_12
+relu_9
+relu_11
+conv_10
+conv_13
+score
+bbox
+10-6
+10-5
+10-4
+10-3
+10-2
+10-1
+100
+MSE
+mean squared error propagation
+Fig. 8. MSE (y-axis, logarithmic) per layer (x-axis) for TinyYOLOv3 using
+a scaling factor of S = 256 on a randomly chosen image from the test set
+of TU Darmstadt Pedestrian Dataset [15].
+pedestrian detector network introduced in Subsection III-D.
+A slow increase of the MSE is observable regarding the
+outputs of each TinyYOLOv3 layer. This increase plateaus
+around the fifth layer and stays below a MSE of 0.001. The
+ReLUα activation function helps dealing with deviation from
+the convolution operation by dimming out negative deviation
+due to the lower negative slope. But most significantly is that
+the final convolution layers conv_10 and conv_13 display low
+MSEs. This results in a neglectable difference at the detected
+classes scores score of ∆score = 0.0019 and a deviation of
+maximum 2 pixel for the found Bounding Box (bbox).
+Similar behaviors with low or neglectable deviations are
+observed for other TinyYOLOv3 networks, which are trained
+for different detection tasks, as well as other architectures
+such as Visual Geometry Group (VGG) classification networks
+[17].
+D. Advanced Approaches
+In the following, other promising strategies and more ad-
+vanced approaches are briefly described:
+One approach explicitly tackles the size of the network
+compressing them by factors up to 30 using weight sharing
+via k-means clustering method and code books with Hඎൿൿආൺඇ
+encoding [18].
+Another goal is to reduce the internal bit widths. In order
+to achieve that, a distribution based quantization scheme is
+developed quantizing each filter accordingly to the weight
+distribution. With that, lower bit widths like 4 bit weights and
+8 bit activations are possible [19].
+Structural adaptations in architecture designs are proposed
+for example with MobileNet [9]. MobileNet introduces a
+new layer type: the depth-wise convolution layer. One of its
+advantages compared to the “classic” convolution layer is the
+lower amount of FLOPS required for inference. In MobileNet
+the ReLU function is extended with a threshold parameter θ
+39
+Copyright (c) IARIA, 2020.     ISBN:  978-1-61208-775-7
+ALLDATA 2020 : The Sixth International Conference on Big Data, Small Data, Linked Data and Open Data
+
+for preventing overflows and allowing lower bit widths. The
+default value used in MobileNet for θ is 6. The so called
+ReLU-6 function is directly supported in tensorflow [20].
+Another very promising idea is based on replacing multipli-
+cations with XNOR operations, which is speeding up inference
+heavily [21]. The so called XNOR-Net is created for image
+classification using binary activation and adapted gradient
+descent methods for training. However, its main disadvantage
+is the lack of framework support for the commonly used
+machine learning frameworks.
+In order to extend the existing design, appropriate concepts
+of the presented advanced approaches will be considered.
+V. Cඈඇർඅඎඌංඈඇ
+The work flow of the adaptation stage with the following
+methods is shown:
+• Fusion of batch normalization sub layers (Section II):
+Formulae and benefits for eliminating the batchnorm sub
+layers by fusing the batchnorm parameters into the weight
+and bias parameters of the preceding convolutional layer
+are presented.
+• Pruning of convolutional filters (Section III):
+A pruning routine with two different pruning metrics is
+elaborated. The advantages and reduction potentials are
+exemplary stated.
+• Creation of a quantized twin using integer arithmetic
+(Section IV):
+A straight forward approach with utilisation of shift
+operation to speed up inference is given. More advanced
+strategies are mentioned and will be investigated in future
+works.
+Overall, the goal of running a TinyYOLOv3 CNN architecture
+on an Artix-7 FPGA is accomplished. In order to speed up
+inference on the FPGA, more optimizations will be developed
+and supplemented with fitting improvements from other strate-
+gies as presented in Subsection IV-D.
+Aർ඄ඇඈඐඅൾൽ඀ආൾඇඍ
+The investigation of the described adaptations for CNNs
+on re-configurable hardware are developed at AVI Systems
+at Freital Germany as well as the chair of VLSI-Design,
+Diagnostic and Architecture of the Institute of Computer
+Engineering at Technische Universität Dresden.
+Rൾൿൾඋൾඇർൾඌ
+[1] R. Girshick, J. Donahue, T. Darrell, and J. Malik, “Rich feature
+hierarchies for accurate object detection and semantic segmentation,”,
+Proceedings of the IEEE conference on computer vision and pattern
+recognition, pp. 580–587, 2014.
+[2] J. Redmon and A. Angelova, “Real-time grasp detection using convo-
+lutional neural networks,” IEEE International Conference on Robotics
+and Automation (ICRA), pp. 1316–1322, 2015.
+[3] J. Redmon, S. Divvala, R. Girshick, and A. Farhadi, “You Only
+Look Once: Unified, real-time object detection,” IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR), pp. 779–788, 2016.
+[4] J. Redmon and A. Farhadi, “YOLO9000: Better, faster, stronger,” IEEE
+Conference on Computer Vision and Pattern Recognition (CVPR), doi.
+10.1109/cvpr.2017.690, 2017.
+[5] J. Redmon and A. Farhadi, “YOLOv3: An incremental improvement,”,
+arXiv:1804.02767, 2018.
+[6] T. Tieleman and G. Hinton, “Divide the gradient by a running average
+of its recent magnitude,” Tech. Rep., Technical report, p. 31, 2012.
+[7] D.P. Kingma and J. Ba, “Adam: A method for stochastic optimization,”
+arXiv:1412.6980, 2014.
+[8] S. Ioffe and C. Szegedy, “Batch normalization: Accelerating deep
+network training by reducing internal covariate shift,” Proceedings of
+the 32nd International Conference on Machine Learning, pp. 448–456,
+2015.
+[9] A.G. Howard, M. Zhu, B. Chen, D. Kalenichenko, W. Wang, T.Weyand,
+et al., “MobileNets: Efficient convolutional neural networks for mobile
+vision applications,” arXiv:1704.04861, 2017.
+[10] K. He, X. Zhang, S. Ren, and J. Sun, “Deep residual learning for
+image recognition,” IEEE Conference on Computer Vision and Pattern
+Recognition (CVPR), doi. 10.1109/cvpr.2016.90, 2016.
+[11] F. Chollet and others, “BatchNormalization,” https://keras.io/layers/nor-
+malization/, retrieved: 01.2020, 2014.
+[12] M. C. Mozer and P. Smolensky, “Skeletonization: A technique for
+trimming the fat from a network via relevance assessment,” Advances
+in Neural Information Processing, pp. 107–115, 1989.
+[13] E. D. Karnin, “A simple procedure for pruning back-propagation trained
+neural networks,” IEEE transactions on neural networks, vol. 1, no. 2,
+pp. 239–242, 1990.
+[14] R. Reed, “Pruning algorithms-a survey,” IEEE transactions on neural
+networks, vol. 4, no. 5, pp. 740–747, 1993.
+[15] M. Andriluka, S. Roth, and B. Schiele, “People-tracking-by-detection
+and people-detection-by-tracking,” IEEE Conference on computer vision
+and pattern recognition, pp. 1–8, June 2008.
+[16] I.
+Wunderlich,
+“CNN4FPGA,”
+GitHub
+repository,
+https://github.com/IlkayW/CNN4FPGA.git, 2020.
+[17] K. Simonyan and A. Zisserman, “Very Deep Convolutional Networks
+for Large-Scale Image Recognition,” arXiv:1409.1556, 2014.
+[18] S. Han, H. Mao, and W. J. Dally, “Deep compression: Compressing
+deep neural networks with pruning, trained quantization and Huffman
+coding,” arXiv:1510.00149, 2015.
+[19] S. Sasaki, A. Maki, D. Miyashita, and J. Deguchi, “Post training weight
+compression with distribution-based filter-wise quantization step,” IEEE
+Symposium in Low-Power and High-Speed Chips (COOL CHIPS), pp.
+1–3 , 2019.
+[20] Tensorflow “ReLU-6,”, https://www.tensorflow.org/api_docs/python
+/tf/nn/relu6?version=stable, retrieved: 01.2020.
+[21] M. Rastegari, V. Ordonez, J. Redmon, and A. Farhadi, “XNOR-Net:
+ImageNet classification using binary convolutional neural networks,”
+Lecture Notes in Computer Science, pp. 525–-542, doi. 10.1007/978-3-
+319-46493-0_32, 2016.
+40
+Copyright (c) IARIA, 2020.     ISBN:  978-1-61208-775-7
+ALLDATA 2020 : The Sixth International Conference on Big Data, Small Data, Linked Data and Open Data
+

@@ -1,0 +1,432 @@
+Exchanging Database Writes with Modern Crypto
+Andreas Happe, Thomas Loruenser
+Department Safety & Security
+AIT Austrian Institute of Technology GmbH
+Vienna, Austria
+email: {andreas.happe|thomas.loruenser}@ait.ac.at
+Abstract—Modern cryptography provides for new ways of
+solving old problems. This paper details how Keyed-Hash Mes-
+sage Authentication Codes (HMACs) or Authenticated Encryp-
+tion with Associated Data (AEAD) can be employed as an
+alternative to a traditional server-side temporal session store.
+This cryptography-based approach reduces the server-side need
+for state. When applied to database-based user-management
+systems it removes all database alteration statements needed for
+conﬁrmed user sign-up and greatly removes database alteration
+statements for typical “forgot password” use-cases. As there is
+no temporary data stored within the server database system,
+there is no possibility of creating orphaned or abandoned data
+records. However, this new approach is not generic and can only
+be applied if implemented use-cases fulﬁll requirements. This
+requirements and implications are also detailed within this paper.
+Index Terms—Internet, Network security, Web services
+I. INTRODUCTION AND PROBLEM STATEMENT
+A common web-application user-interaction pattern is
+Request-Veriﬁcation-Execution. An example can be seen in
+Fig. 1: the user requests an server-side operation and transmits
+needed data to the server. The server validates the information
+and stores the user-submitted data temporally on the server.
+To verify the user request a challenge is transmitted through
+a separate communication channel. After the user fulﬁlls the
+challenge the operation is executed and ﬁnalized on the server.
+An example of this pattern is a user registration (we are
+basing all examples upon Ruby on Rails’ Devise framework):
+after a potential new user entered her data on a website,
+she is presented with an conﬁrmation email and the user
+account is only activated after the user has conﬁrmed her
+identity through a conﬁrmation link within this email. Similar
+examples are typical “user registration”, “password reset” or
+“delete account” functions.
+Problems arise if the user fails to perform the veriﬁcation
+step or automated tools request the initial operation thousands
+or millions of times without ever performing the corresponding
+conﬁrmation step. During the initial request temporary data
+is stored within the server: this data is “dead” and must be
+eventually removed from the database. Furthermore, additional
+server-side data is needed for the implementation of the veriﬁ-
+cation process. For example, commonly used implementations
+(depicted in Fig. 2) generate and store a random token within
+a server-side database. This token is included within the
+conﬁrmation email and later matched against the database
+record.
+User
+Web-Application
+Request Operation
+Validate Data
+Send Veriﬁcation Challenge
+Wait for Conﬁrmation
+Fulﬁll Challenge
+Result
+Execute Operation
+Fig. 1. Generic “Request-Veriﬁcation-Execution” Work-Flow
+Server-side temporary data is commonly stored within
+databases and therefore leads to I/O overhead. In this paper,
+we propose an cryptographic alternative utilizing HMACs
+[1] or AEAD that inherently prevents stale database entries
+and removes the need for both data alteration operations and
+additional database ﬁelds.
+The tow approaches are detailed in Section II and Sec-
+tion III. This work is compared with existing solutions in
+section IV. Section V showcases advantages and disadvantages
+of this approach while section VI concludes this paper.
+II. DATABASE-CENTRIC APPROACH
+The database-centric approach stores all temporary data
+within the server-side database as can be seen through the
+multiple database calls in Fig. 2.
+The web-application must track conﬁrmed and unconﬁrmed
+operations. For example, during user registration the appli-
+cation must separate conﬁrmed from unconﬁrmed users as
+the latter must not be able to login. To differentiate between
+those either an explicit or implicit state is used. The former
+can be implemented through an additional state ﬁeld. The
+latter can be implemented through additional metadata, e.g.,
+a conﬁrmed_at ﬁeld. Those ﬁelds must be added to each user
+record but are unused most of the time.
+Typically, an additional database ﬁeld created_at is used to
+store the timestamp of the original request. This allows de-
+tection of orphaned operation that never have been conﬁrmed.
+Subsequently, the user might be sent an reminder-email, but
+50
+Copyright (c) IARIA, 2016.     ISBN:  978-1-61208-512-8
+CYBER 2016 : The First International Conference on Cyber-Technologies and Cyber-Systems
+
+User
+Application
+Database
+Enter Registration Data
+Create Token
+Write (inactive) User Data
+Send Veriﬁcation Email
+Click on Conﬁrm Link
+Search User by Koken
+User Record
+Write new User State
+User created
+(a) User Registration
+User
+Application
+Database
+Request Reset Operation
+Create Token
+add Token to User Record
+Send Veriﬁcation Email
+Click on Reset Link
+Search User by Token
+Display User Data
+Enter new Password
+Search User by Token
+User Record
+Update Password, Remove Token
+Password altered
+(b) Resend Password Functionality
+Fig. 2. Sequence Diagrams for database-centric work ﬂows.
+eventually the stale user record has to be removed if the user
+does not interact.
+The “user registration” use-case shows three distinct
+database interactions. 1) During user registration all mandatory
+user data is captured and stored within the database. Additional
+ﬁelds (e.g., conﬁrmation_token and conﬁrmed_at) are needed
+to perform the registration and are thus added to the database.
+If the new user never conﬁrms his registration, the whole data
+set is “dead” data. 2) when the user clicks on the conﬁrmation
+link contained in the mail, the user record has to be retrieved
+from the database and 3) after conﬁrmation the user record’s
+state is set and meta-information is cleaned up.
+The “password reset” use-case does not depend upon record
+creation but alters the existing user record multiple times. To
+perform the action two new ﬁelds are added to the user record:
+reset_password_sent_at and reset_password_token. Typically,
+four phases of database access can be seen: 1) a new reset
+token is generated and stored within the user record, 2) when
+the user clicks on the veriﬁcation link, the database is queried
+for it’s validity and then a password entry formula is shown
+3) when the user submits a new password the token is again
+veriﬁed and 4) the password is ﬁnally updated within the
+database and meta-information is cleaned up. Even if the data
+is retrieved directly from a in-memory data store, the session
+veriﬁcation commonly entails database access.
+III. ALTERNATIVE: USAGE OF HMAC/AEAD
+Our proposed alternative approach does not depend upon
+server-side storage of temporary state but uses cryptography to
+authenticate data presented by the user during the veriﬁcation
+step. Cryptography is used to ensure that neither users nor
+third-parties are able to tamper data passed on by the server.
+HMACs[1] offer a solution to this problem. A MAC com-
+bines the plain-text data with a secret-key and produces a tag
+that veriﬁes the plain-text data’s integrity and authenticity. In
+our case, the server creates the tag and transmits the plain-
+text data and the tag within the veriﬁcation challenge. When
+the user fulﬁlls the challenge, the tag veriﬁes that the data
+has not been tampered with. The secret-key never leaves the
+server. The transmitted data has to be careful chosen to prevent
+replay attacks as will be detailed later on.
+HMACs provide authentication and integrity but not data
+conﬁdentiality as all input data is transmitted in plain sight.
+AEAD in contrast provides conﬁdentiality, integrity and au-
+thenticity. An AEAD algorithm uses the plain-text and a secret
+key as input, and produces a cipher text and authentication tag
+as output. The overall protocol is similar to the HMAC-based
+protocol but replaces the plain-text data with the cipher text
+to additionally provide data conﬁdentiality. Also similar to the
+HMAC-based algorithm, the encoded data must be sufﬁcient
+to prevent replay attacks.
+Fig. 3 details two possible AEAD-based workﬂows. Instead
+of storing temporary state within the server-side database, the
+state is encrypted and attached to the veriﬁcation challenge,
+e.g., encoded in the veriﬁcation link contained in the sent
+veriﬁcation email. The usage of HMACs/AEAD prevents
+users or third-parties from maliciously altering the transmitted
+data. During veriﬁcation, the server veriﬁes and decrypts the
+received encrypted data and uses it as intermediate state that
+ﬁnally is committed to the database. Note that only a single
+51
+Copyright (c) IARIA, 2016.     ISBN:  978-1-61208-512-8
+CYBER 2016 : The First International Conference on Cyber-Technologies and Cyber-Systems
+
+User
+Application
+Database
+Enter Registration Data
+Validate Data
+Perform AEAD
+Send Veriﬁcation Email
+Finish Validation
+Validate Data
+Write Data to DB
+User Created
+(a) User Registration. The encrypted data includes an
+operation identiﬁer, expiry as well as all data needed for
+the user registration.
+User
+Application
+Database
+Request Reset Operation
+Perform AEAD
+Send Reset-Email
+Click on Reset Link
+Display Data from Token
+Display User Data
+Click on Reset Link, Enter Password
+Validate Data
+Update Password, Remove Token
+Password Altered
+(b) Resend Password Functionality. The encrypted data
+includes an operation identiﬁer, user, expiry, hash of the
+stored password hash.
+Fig. 3. Sequence Diagrams for cryptographic-based work ﬂows. Note the reduced amount of database operations.
+database transaction is performed. This also removes metadata
+ﬁelds, as well as “veriﬁcation”-states from user records.
+A. Data-Field Selection
+Proper
+selection
+of
+ﬁelds
+used
+as
+input
+for
+the
+HMAC/AEAD-function prevents replay attacks. This selection
+should be sufﬁcient to uniquely identify the executed operation
+and its context.
+An unique operation identiﬁer is mandatory. Otherwise
+given operation1 and operation2, the encoded data from
+operation1 could be used during veriﬁcation of operation2.
+A stable user identiﬁed is needed to associate the encoded
+data with an user account.
+Once the server has authenticated a data block, it is valid
+until the server’s private key is changed. A real-world imple-
+mentation would include a creation or expiry date to limit the
+lifetime of the veriﬁcation token.
+An anchor element is needed to differentiate between
+subsequent states. For example, a “reset password”-function
+should include a hash of the current password. The hash will
+be compared to the currently stored hash during operation
+execution and thus limit’s the operation’s validity to changing
+the “current” password. Otherwise, the same veriﬁcation token
+could be maliciously used to repeatedly change the user’s
+password.
+All user-supplied data that would otherwise be stored
+as temporary data within the server-side database must be
+included within the data block.
+In our “user registration” case, we could select the following
+parameters: [operation-id: “registration”, expiry: “2016-1-
+30”, user-id: “andreas.happe@ait.ac.at”, user-data: “...”]
+as input for the AEAD/HMAC function. For a potential “pass-
+word reset” function, we would chose [operation-id: “reset”,
+expiry: “2016-1-30”, user-id: “andreas.happe@ait.ac.at”,
+old-password-hash: “hash of my currently stored password”]
+as veriﬁcation token.
+IV. RELATED WORK
+To the best of our knowledge, the ﬁrst and only study—and
+thus inspiration for this paper— of using HMACs for Request-
+Veriﬁcation-Execution workﬂows was published within a blog
+post by Mahmoud Al-Qudsi[2]. In contrast, our paper details
+potential replay attack vectors and introduces data conﬁden-
+tiality through usage of AEAD schemes.
+A comparable mechanism lies at the heart of HTTP session
+management: here, the session is managed on either server- or
+client-side. With client-side management the session’s data is
+signed on the server with a secret key, transmitted and stored
+at the client. On subsequent requests the cookie is transmitted
+to the server and validated with the server’s secret key. When
+using a server-side scheme all session-data is stored at the
+server and only a session identiﬁer is stored at the client. The
+overall scheme is similar to our proposed approach but it’s
+applicability differs: HTTP cookies are limited to the client’s
+browser and thus allow for identiﬁcation of a browser-based
+session. We see usage for our scheme within persisted mails.
+As mails can be stored and forwarded between clients our
+approach is more akin to token passing.
+52
+Copyright (c) IARIA, 2016.     ISBN:  978-1-61208-512-8
+CYBER 2016 : The First International Conference on Cyber-Technologies and Cyber-Systems
+
+As an concrete example, the Ruby on Rails’ CookieStore
+stores session information within a client-side cookie and
+veriﬁes the validity of the cookie through a server-side com-
+puted HMAC utilizing a secret server-side key. An alternative
+session-store is database-backed. The Ruby on Rails Security
+Guide[3] describes implications of the different session stores
+that are similar to the those of using AEAD/HMAC-based
+temporary state storage.
+In August 2008, AEAD schemes were made mandatory
+for TLSv1.2[4], [5]. The ambiguity of encrypted HTTPS
+communication lead hardware vendors to the inclusion of dedi-
+cated encryption co-processors and/or inclusion of encryption-
+speciﬁc instructions within their microcode thus making
+hardware-supported high-performance AEAD functions com-
+monly available on server-grade hardware. The situation will
+further improve in the future as the current TLSv1.3 draft
+mandates the usage of AEAD ciphers.
+V. IMPLICATIONS AND LIMITATIONS
+Usage of the cryptography-centric approach has several
+implications:
+No server-side state. As no temporal data is stored, the
+server has no opportunity to detect operations waiting for
+user conﬁrmation. This functionality is sometimes used to
+implement an “reminder” email to improve user response rate.
+A stable ID and anchor element are needed to prevent play-
+back attacks. For example, if user-changeable email addresses
+are used as stable identiﬁers, an attacker can create a new
+“user deletion token”, change his email account, wait until a
+victim creates an account using the same email address, and
+then delete this account until the token expires. To solve this,
+an additional anchor element has to be included, in this case
+the initial creation time could be used. For another example of
+an anchor element, consider the mentioned “reset password”-
+function: request should include a hash of the current pass-
+word. This anchors the update to the current database state and
+prevents the replay attack. Without an unique anchor element,
+race conditions can occur. For example, if two users sign-
+up with the same email address the ﬁrst user that conﬁrms
+(through his link) will be created. A similar race condition is
+present at the traditional scheme, but in this case the critical
+section is the initial data entry form.
+The wrong HTTP Verb is used. Conﬁrmation will com-
+monly happen through a HTTP GET link. Data alteration
+operations should be performed through a HTTP PUT, POST
+or DELETE operation. The same discrepancy is true for
+traditional schemes.
+The Privacy of the secret key is paramount. If an attacker
+retrieves the secret key (used for encryption or HMAC-
+operation) from the server he can forge any operation request.
+We think this attack vector to be non-critical, as an attacker
+with this capability can already access the database directly.
+Size limit for transmitted messages. While the HTTP/1.1
+protocol initially did not limit the transmission size for GET
+request[6], a later revision did place a limit of 8000 octets[7].
+Real-world web browsers and servers enforce different limits,
+especially older Internet Explorer Versions (2048 bytes). Cur-
+rent browsers and servers should be able to cope with 8192
+bytes of data while 2048 bytes should be reasonable safe.
+Aesthetic Considerations. With AEAD all information is
+encoded within the passed parameter. This parameter can get
+large and leads to an unaesthetic URL – this can be a problem
+for usage within text-based emails while it is acceptable within
+HTML-based emails.
+Usage before conﬁrmation is not possible. Sometimes web-
+applications offer limited functionality between user-sign-up
+and user-veriﬁcation. This is not possible with our alternative
+scheme as the server-side user-account is only created upon
+user-veriﬁcation.
+Also please note that the integrity and conﬁdentiality of
+the transport layer needs to be provided by additional means.
+With a captured token the attacker has all needed means for
+an Man-in-the-Middle attack. This implies mandatory usage
+of TLS.
+VI. CONCLUSION
+This paper initially introduced common problems that arise
+with server-side state management. Cryptographic means al-
+low alternative schemes that do not share those issues, but in
+turn, their applicability highly depends upon the surrounding
+use-case. We have shown how two common use-cases, “user
+registration” and “password reset” can be implemented using
+our new scheme.
+As shown with those examples, we believe that our alterna-
+tive solution has real-world merits and can improve existing
+software solutions. In addition, we hope, that this paper shines
+more light upon the generic technique and increases it’s
+visibility among software engineers.
+VII. ACKNOWLEDGEMENTS
+The authors would like to thank Mahmoud Al-Qudsi for his
+detailed comments.
+REFERENCES
+[1] H.
+Krawczyk,
+M.
+Bellare,
+and
+R.
+Canetti,
+“Rfc
+2104:
+Hmac:
+Keyed-hashing
+for
+message
+authentication,”
+URL
+http://www.rfc.net/html/rfc2104, 1997.
+[2] M. Al-Qudsi. (2015) Life in a post-database world: using crypto to avoid
+db
+writes.
+[Online].
+Available:
+https://neosmart.net/blog/2015/using-
+hmac-signatures-to-avoid-database-writes/
+[3] Ruby
+on
+rails
+security.
+[Online].
+Available:
+http://guides.rubyonrails.org/security.html#session-storage
+[4] T. Dierks and E. Rescorla, “Rfc 5246: The transport layer security (tls)
+protocol version 1.2,” URL http://www.rfc.net/html/rfc5246, 2008.
+[5] J. Salowey, A. Choudhury, and D. McGrew, “Rfc 5288: Aes galois mode
+(gcm) cipher suites for tls,” URL http://www.rfc.net/html/rfc5288, 2008.
+[6] R. Fielding, J. Gettys, J. Mogul, H. Frystyk, L. Masinter, P. Leach, and
+T. Berners-Lee, “Rfc 2616: Hypertext transfer protocol–http/1.1, 1999,”
+URL http://www.rfc.net/rfc2616.html, 2009.
+[7] R.
+Fielding
+and
+J.
+Reschke,
+“Rfc
+7230:
+Hypertext
+transfer
+protocol
+(http/1.1):
+Message
+syntax
+and
+routing,”
+URL
+http://www.rfc.net/rfc7230.html, 2014.
+53
+Copyright (c) IARIA, 2016.     ISBN:  978-1-61208-512-8
+CYBER 2016 : The First International Conference on Cyber-Technologies and Cyber-Systems
+

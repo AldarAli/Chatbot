@@ -1,0 +1,1656 @@
+State Space Reconstruction in UPPAAL: An
+Algorithm and its Proof
+Jonas Rinast, Sibylle Schupp
+Institute for Software Systems
+Hamburg University of Technology, Hamburg, Germany
+Email: {jonas.rinast,schupp}@tuhh.de
+Dieter Gollmann
+Security in Distributed Applications
+Hamburg University of Technology, Hamburg, Germany
+Email: diego@tuhh.de
+Abstract—Efﬁcient state space reconstruction is necessary to
+carry out on-line model checking, a variant of model checking
+where parameters of a model are continually adjusted to remedy
+possible modeling faults. On-line model checking is, for example,
+useful in the medical domain where models of patient states
+and reactions are always inaccurate, but ensuring patient safety
+with model checking techniques is still desirable. In this paper,
+we propose a transformation reduction method based on use-
+deﬁnition chains to efﬁciently carry out the required state space
+reconstruction. We provide a formal speciﬁcation of the general
+algorithm and proofs for its correctness. For evaluation we
+applied our reduction approach to the state space of the model
+checker UPPAAL. The experiments resulted in a reduction of the
+number of transformations necessary to reach a certain state by
+42% on average.
+Keywords—State Space Reconstruction; On-line Model Check-
+ing; UPPAAL; Reference Counting; Use-Deﬁnition Chain.
+I.
+INTRODUCTION
+Medical treatment facilities have grown to rely signiﬁcantly
+on medical devices for monitoring and treatment. Most devices
+are still operated manually today and need to be conﬁgured,
+maintained, and supervised by medical staff. Recently, closed-
+loop monitoring and treatment of patients became a research
+topic as experience shows that human errors are prevalent.
+Patient-in-the-loop systems try to autonomously assess the
+patient’s state using a monitoring device and if necessary treat
+the patient automatically, e.g., via a remote infusion pump.
+Clearly, such a system must be shown to cause no harm to
+the patient. Safety must be ensured to prevent harm from
+the patient not only during normal operation but also in case
+emergency situations arise.
+Model checking is a well developed technique for verifying
+that a system model conforms to its speciﬁcation and thus
+may be applied to show the safety of such systems. However,
+to make meaningful conclusions about the system’s behavior
+it is necessary to have detailed and accurate models of the
+individual components of the system. In the medical domain,
+model checking is therefore severely hampered if the patient
+needs to be modeled accurately, e.g., to make estimates on a
+drug concentration in the patient. Generally, a patient model
+is likely to be inaccurate as the physiology of the human body
+is complex and varies between individuals, e.g., blood oxygen
+and heart rate depend on the patient’s condition. A generalized
+model will always miss individual characteristics. Patient-in-
+the-loop systems thus could be proved safe with such models
+but might still put patients at risk.
+On-line model checking is a recent model-checking variant
+that relaxes the need for models to be accurate far into the
+future. On-line model checking provides safety assurances for
+short time frames only and renews these assurances continually
+during operation. Appropriate models for the system thus only
+need to be correct for the short time frame they are used in.
+The renewal of safety assurances then is carried out on models
+adapted to the current system state to ensure the system’s safety
+for the next time window. This on-line approach thus allows
+safety assessment at all times and provides means to react
+before safety violations occur.
+Because parts of the previous state should be maintained
+and cross-correlations between state variables could be de-
+stroyed inadvertently a model adaptation step may ﬁrst create
+an initialization sequence that recreates the previous model
+state before adjusting single values. The reconstruction is
+necessary to allow the simulation of the model to continue
+from the state it was interrupted in. This paper presents an
+automated state reconstruction approach for the Uppsala and
+Aalborg model checker (UPPAAL) that eliminates the need for
+custom reconstruction procedures for every application. The
+developed reconstruction method serves as a base for an on-
+line model checking interface with UPPAAL as the underlying
+veriﬁcation engine.
+Naively, the state space can be reconstructed by executing
+the same transition sequence that was used to create the state
+in the beginning. However, if the simulation has already run a
+signiﬁcant time the executed transition sequence is likely to be
+long and only continues to grow over time. A more direct way
+to the desired state space is needed to keep the reconstruction
+process fast and on-line model checking feasible. For our
+reconstruction approach we adopted use-deﬁnition chains, a
+data ﬂow analysis capturing relations of data sources and sinks,
+to eliminate transformations that have no effect on the ﬁnal
+state space. Such transformations occur when their results are
+overwritten before they are read. Our reconstruction method
+has been applied to seven different test models. The method
+always reconstructed the original state space while yielding a
+reduction of the executed transformations in the range from
+23% to 84%.
+To summarize, in this paper we, ﬁrst, contribute to the
+ﬁeld of on-line model checking by presenting a transformation
+reduction algorithm together with its proof that may be used
+to reconstruct a particular model-checking state space, and,
+second, also contribute to the applicability of the UPPAAL
+model checker by providing a specialization of the algorithm
+91
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+together with its implementation evaluation.
+The rest of the paper is organized as follows: Section II
+gives an overview on related literature. Section III brieﬂy intro-
+duces model checking, on-line model checking, and the model
+checker UPPAAL. Section IV provides necessary information
+on UPPAAL’s state space and its transformations. Section V
+then explains our reconstruction approach with a focus on the
+reduction algorithm using use-deﬁnition chains. Section VI
+presents our evaluation results and, lastly, Section VII sum-
+marizes the paper and suggests further research.
+This paper is an extended version of the paper published at
+VALID 2013 [1]. In contrast to the explanation of the reduction
+approach by way of a running example, this paper provides
+detailed information on the reduction by formalizing the ap-
+proach and providing correctness proofs for the algorithm.
+II.
+RELATED WORK
+The on-line model checking approach our reconstruction
+method is complementing and thus is closest to has recently
+been proposed by Li et al. [2][3]. They employ a hybrid
+automata model to ensure correct usage of a laser scalpel
+during laser tracheotomy to prevent burns to the patient. Yet,
+the necessary model initialization and reconstruction step is
+a custom solution and is not presented in detail. To our
+knowledge there are no other reconstruction methods for a
+particular UPPAAL state in the context of on-line model
+checking. However, the UPPAAL variant UPPAAL Tron, an
+on-line testing tool that can generate and execute test cases
+on-the-ﬂy based on a timed automata system model, has
+been developed [4]. While the tool focus lies on input/output
+testing using a static system model the fact that the underlying
+model is an UPPAAL model means that our reconstruction
+approach might be beneﬁcial for tests when the system model
+is inaccurate or still needs to be developed. Other related work
+falls in two categories: different ways to use or implement on-
+line model checking, and different ways to optimize state space
+exploration and representation in model checkers.
+Qi et al. propose an on-line model checking approach
+to evaluate safety and liveness properties in C/C++ web
+service systems [5]. Their focus lies on consistency checks
+for distributed states to debug a system from known source
+code. Reconstruction is not an issue because the source code is
+static during execution. Easwaran et al. use a control-theoretic
+approach to the general runtime veriﬁcation problem [6]. They
+introduce a steering component featuring a model to predict
+execution traces. Their approach uses a ﬁxed prediction model
+while our reconstruction is for adapting inaccurate models.
+Sauter et al. address the prediction of system properties using
+previously gathered time series of measurements, e.g., taken
+by sensors [7]. They propose a split into an on-line and an
+off-line computation and to precompute expensive parts of
+the prediction step to reduce on-line work load. While their
+scenario of adapting using sensor measurements is applicable
+to our medical scenario with inaccurate patient models they
+focus on the veriﬁcation load problem while we address model
+inaccuracy. Harel et al. propose usage of model checking
+during the behavior and requirement speciﬁcation step during
+development. Instead of interactively guiding the system to
+derive requirements a model checker executes the model
+and generally ﬁnds more adequate requirements. While their
+approach employs on-line model checking their goal thus lies
+on early requirement development. In contrast, our approach
+is useful in adaptation of deployed systems to ensure safety.
+Arney et al. present a recent patient-in-the-loop case study
+for automatic monitoring and treatment where UPPAAL and
+Simulink models were developed to verify safety questions
+beforehand [8]. They monitor heart rate and blood oxygen
+levels of the patient and automatically control drug infusion
+via a remote pump. On-line model-checking could beneﬁt this
+scenario as currently a generalized patient model is employed
+and drug absorption rates may vary per patient.
+Alur and Dill introduced timed automata and the under-
+lying theory in 1994 [9] and Yi et al. developed the ﬁrst
+implementation of the model-checker UPPAAL shortly after
+[10]. Many improvements have been made to the model-
+checking approach over the years. Larsen et al. proposed
+symbolic and compositional approaches to reduce the state-
+space explosion problem [11]. Partial order reduction on the
+state space was employed by Bengtsson [12]. Larsen et al.
+reduced memory usage on-the-ﬂy using an algorithm that
+exploits the control structure of models [13][14]. Further
+memory reductions were achieved by Bengtsson et al. with
+efﬁcient state inclusion checks and compressed state-space
+representations [15]. Behrmann et al. provide an overview on
+current functionality and the usage of UPPAAL [16]. They also
+provide a more detailed presentation of UPPAAL’s internal
+representations [17]. For a summary on timed automata, the
+semantics, used algorithms, data structures, and tools see [18].
+Bengtsson’s PhD thesis provides more in-detail information on
+difference bounded matrices [19].
+III.
+ON-LINE MODEL CHECKING
+This section introduces model checking and its on-line
+variant, on-line model checking. The technique is shown by
+way of example using the model checker UPPAAL; for a
+formal speciﬁcation of UPPAAL see [18].
+Generally, model checking explores the state space of a
+given system model in a symbolic fashion to check whether
+the state space satisﬁes certain properties. Such properties are
+mostly derived from a requirement speciﬁcation for the system,
+e.g., one could check whether or not a certain system state
+is actually reachable. The modeling and property languages
+vary greatly depending on the model-checking tool. Tools
+for various programming languages coexist with dedicated
+tools that support their own modeling language. Dedicated
+tools often use ﬁnite state automata as a base formalism for
+their models. UPPAAL is such a well-established, dedicated
+model checking tool, jointly developed by Uppsala University,
+Sweden, and Aalborg University, Denmark [13][16]. It is based
+on the formalism of timed automata, an extension of ﬁnite
+state automata with clock variables to allow modeling of time
+constraints. A ﬁnite state automaton deﬁnes a transition system
+by deﬁning locations and edges that connect these locations.
+Edges are ﬁred to execute a transition from one location to
+another. The system state in this case is the current location
+of the automaton and the possible valuations of the clock
+variables.
+Figure 1 shows the example model that will be used to
+demonstrate the proposed state space reconstruction method.
+92
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+x <= 2
+x = 0,
+c = 0
+x = 0,
+c = (c + 1) % 7
+Inv
+Init
+Count
+x = 1
+x >= 3
+x >= 3
+Figure 1.
+UPPAAL Model Example
+The model consists of three locations, Init, Inv, and Count,
+where Init is the initial location indicated by the double
+circle. The model uses two variables: x, a clock variable,
+and c, a bounded integer variable. Clock variables are special
+variables that synchronously advance indeﬁnitely unless they
+are bounded by one or more invariants on the current locations.
+The location Inv has such an invariant, x <= 2, to bound the
+clock x, thus the value of x in Inv can be any value between
+its value when it entered the location and 2. The model
+has a single transition from the initial location to Inv. This
+transition is annotated with a guard, x >= 3, and an update,
+x = 0, c = 0. Guards are used to enable and disable edges
+depending on the current state. Here, the clock x needs to be
+greater or equal to 3 for the edge to be enabled. Only then
+can it be ﬁred and a transition occurs. Indeed, as there is no
+invariant on x on the initial location the edge is enabled for
+values greater or equal to 3. Upon ﬁring of the edge the update
+is executed: the clock x and the bounded integer c are both
+reset to 0. The edge from Count to Inv is nearly identical to the
+previous edge: when x is greater or equal to 3 the edge may be
+ﬁred but x is reset to 1 instead of 0 and c is not modiﬁed. As
+a consequence, the value of x in Inv is between 0 and 2 when
+the location is ﬁrst entered and between 1 and 2 on every
+subsequent visit. The transition between Init and Count has
+no guard and shows that an update may consist of a complex
+expression: the update c = (c + 1) % 7 increases c by 1
+modulo 7.
+As explained in the introduction, model checking relies on
+accurate long term models. On-line model checking is a variant
+of classic model-checking that eliminates the need for such
+models and thus may be applied when they are unavailable.
+It reduces the modeling error by periodically adjusting the
+current state to the observed real state, e.g., by setting a model
+value to the exact value measured by a sensor attached to a
+patient. For example, if we consider the model in Figure 1 one
+could assume that the counter variable c is modeling some
+patient’s parameter. If that parameter in reality occasionally
+jumps the model is inaccurate and needs to be adjusted by
+setting c to the correct value. On-line model checking performs
+the adjustments and thus the jumps do not need to be modeled
+accurately. Note that errors may still be present in the system
+under on-line model checking but the method predicts them in
+advance to react to them.
+On-line model checking requires the model analysis to
+ﬁnish before the next update interval to give meaningful
+results. Although generally the main work is done by the
+model checker the reconstruction still consumes some time,
+which our method reduces compared to the naive automatic
+reconstruction approach.
+IV.
+UPPAAL’S STATE SPACE
+UPPAAL’s state space can be divided into three parts: the
+time state, the location state, and the data state. The location
+and the data state are straightforward: every data variable is
+assigned exactly one value for the data state and the location
+state consists of the current location vector, i.e., a vector that
+contains the current location for every automaton instance.
+The time state is more complicated as it needs to capture all
+possible valuations for every clock in the model as well as
+all relations between the clocks. Difference bound matrices
+(DBM) are a common and simple representation method for
+such time states [18][19]. By introducing a static zero clock in
+addition to all the clocks in the model (C0 = C ∪ 0, C the set of
+all clocks) all necessary clock constraints can be written in the
+form x − y ⪯ n where x and y are clocks (x, y ∈ C0), ⪯ is a
+comparator (⪯ ∈ {<, ≤}), and n is an integer (n ∈ Z). A value
+in a difference bound matrix then is a tuple of an integer and a
+comparator (n, ⪯), n ∈ Z, ⪯ ∈ {<, ≤} or the special symbol
+∞, which indicates no bound. We denote the set of such entries
+by K = ({Z × {<, ≤}} ∪ ∞). An order on the entries is
+given by (n, ⪯) < ∞, (n1, ⪯1) < (n2, ⪯2) if n1 < n2, and
+(n, <) < (n, ≤). Furthermore, addition is deﬁned as follows:
+(n, ⪯) + ∞ = ∞, (m, ≤) + (n, ≤) = (m + n, ≤), and
+(m, <)+(n, ⪯) = (m + n, <). A difference bound matrix thus
+contains one bound, either including or excluding, for every
+pair of clocks: M ∈ K|C0|×|C0|.
+As an example a clock constraint system with two clocks
+a and b and the constraints a ∈ [2, 4), b > 5, and b − a ≥ 3 is
+transformed to the canonical constraints a−0 < 4, 0−a ≤ −2,
+b − 0 < ∞, 0 − b < −5, a − b ≤ −3, and b − a < ∞. The
+corresponding DBM is
+0
+a
+b
+"
+#
+0
+0
+(−2, ≤)
+(−5, <)
+a
+(4, <)
+0
+(−3, ≤)
+b
+∞
+∞
+0
+During simulation of an UPPAAL model its transitions are
+repeatedly executed. Every transition generally has multiple
+effects on the time state and each such effect corresponds to a
+transformation of the difference bound matrix that represents
+the current time state. The following summary lists the DBM
+transformations necessary to traverse the state space [19]:
+•
+Clock Reset A clock reset is performed when an
+edge is ﬁred that has an update for a clock variable
+(x = n). A clock reset sets the upper and lower
+bound on the clock x to the given value and depending
+constraints, i.e., constraints on a clock difference in-
+volving x are adjusted. This corresponds to modifying
+the matrix row and column for the clock x.
+•
+Constraint Introduction A constraint introduction is
+performed if either a ﬁring edge has a guard on a
+clock or an invariant on a clock is present in a current
+location and the bound is more restrictive than the
+current constraint on the involved clock. In that case
+the relevant matrix entry is set to the new constraint
+and for all other entries in the matrix it is checked
+whether the new bound induces stricter bounds.
+93
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+•
+Bound Elimination Bound elimination is performed
+when a new location is entered. All bounds on clock
+constraints of the form c − 0 < n are removed,
+i.e., the upper bounds on clocks are removed. Bound
+elimination is equivalent to setting the ﬁrst matrix
+column except the top-most value to ∞.
+•
+Urgency Introduction An urgency introduction is per-
+formed if an urgent or committed location is entered or
+an entered location has an outgoing, enabled transition
+that synchronizes on an urgent channel. Unlike the
+previous transformations, urgency is a modeling con-
+struct speciﬁc to UPPAAL to prevent time from pass-
+ing. An urgency introduction is semantically equiv-
+alent to introducing a fresh clock on the incoming
+edge and adding a new invariant on that clock with a
+bound of 0 to the location. An urgency introduction
+thus can be derived from a clock reset and a constraint
+introduction.
+Returning to the example model (Figure 1) the individual
+transitions can now be broken down into their respective
+transformations. The initial location Init induces a bound elim-
+ination on the initial state where all clocks are set to zero. The
+transition from Init to Inv yields a constraint introduction for
+the guard (x >= 3) and a subsequent clock reset (x = 0,
+c = 0). The reset of the bounded integer c is ignored here
+as c is part of the data state. The location Inv results in a
+bound elimination and a following constraint introduction to
+accommodate the invariant (x <= 2). The transition from Inv
+to Count simply induces a single clock reset transformation
+before the location Count eliminates the bound on the state
+space again. Lastly, the transition from Count to Inv introduces
+the same kind of transformations as the transition from Init to
+Inv: both perform a constraint introduction and a clock reset.
+The values computed for the clock variable x are as follows:
+1)
+Location Init
+a)
+Initial: x = 0
+b)
+Bound Elimination: x ∈ [0, ∞)
+2)
+Transition Init −→ Inv
+a)
+Constraint Introduction: x ∈ [3, ∞)
+b)
+Clock Reset: x = 0
+3)
+Location Inv
+a)
+Bound Elimination: x ∈ [0, ∞)
+b)
+Constraint Introduction: x ∈ [0, 2]
+4)
+Transition Inv −→ Count
+a)
+Clock Reset: x = 0
+5)
+Location Count
+a)
+Bound Elimination: x ∈ [0, ∞)
+6)
+Transition Count −→ Inv
+a)
+Constraint Introduction: x ∈ [3, ∞)
+b)
+Clock Reset: x = 1
+7)
+Location Inv
+a)
+Bound Elimination: x ∈ [1, ∞)
+b)
+Constraint Introduction: x ∈ [1, 2]
+V.
+STATE SPACE RECONSTRUCTION
+In many models a large number of past transitions do not
+have an impact on the current state space. In the example
+model (Figure 1) this behavior can be observed: in the location
+Count the clock x is in the range [0, ∞). This valuation was
+completely created by the clock reset of the ingoing edge
+and the bound elimination of the location itself. Previous
+state space transformations do not inﬂuence the valuation of
+x. Therefore, instead of executing the transition sequence
+Init −→ Inv −→ Count totaling 7 transformations only 3
+transformations are required to reach the same state space. The
+introduction of a new initial state and the direct transition to
+Count with an update x = 0 is sufﬁcient to recreate this time
+state space. During reconstruction it is thus beneﬁcial to exploit
+the fact that effects of certain state space transformations are
+overwritten by subsequent transformations.
+The remainder of this section ﬁrst formally deﬁnes a
+transformation system and conditions for removing transfor-
+mations from a sequence (Subsection V-A). Subsection V-B
+then presents our reduction algorithm based on use-deﬁnition
+chains. The application of the algorithm to the reconstruction
+problem in UPPAAL is discussed in Subsection V-C. Lastly,
+Subsection V-D summarizes the complete reconstruction pro-
+cess in UPPAAL.
+A. Transformation Elimination Formalized
+We now formally derive when transformations may be
+removed from a general transformation sequence. Examples
+of the individual parts of the formalization can be found
+in Subsection V-C, where we specialize the formalization to
+UPPAAL. Parts of our formalization and its specialization
+to UPPAAL are also published at FM 2014, where a more
+recent graph-based state space reconstruction algorithm using
+the same transformation abstraction is described [20].
+Deﬁnition 1. An evaluation function is a mapping
+e : V → D
+where V is a set of variables and D is the valuation domain
+of these variables.
+We denote the set of all evaluation functions by E(V, D).
+Deﬁnition 2. A transformation of the evaluation functions is
+a mapping
+t : E(V, D) → E(V, D)
+Let e1
+t1
+−→ e2
+t2
+−→ . . .
+tN−1
+−−−→ eN be a sequence of
+evaluation functions created by the transformations ti where
+t−→ indicates the application of a single transformation t. We
+denote the transformation sequence t1, t2, . . . , tN−1 by T and
+the evaluation function sequence e1, e2, . . . , eN by E.
+For the transformation reduction we are interested in ﬁnd-
+ing a subsequence T ′ ⊆ T such that e1
+T ′
+=⇒ eN where
+T=⇒
+denotes the ordered application of a sequence of transforma-
+tions T. Note that we use set notation for sequences although
+sequences are ordered and may contain duplicates. Such a
+transformation sequence T ′ then results in the same last eval-
+uation function eN but has potentially fewer transformations
+than T.
+The reduction requires the speciﬁcation of the transfor-
+mations involved to capture their inﬂuence on the evaluation
+functions.
+94
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+Deﬁnition 3. An evaluation calculation is a mapping
+m : 2V × E(V, D) → D
+where m(V, e) computes a domain value by using exactly the
+evaluations e(v) where v ∈ V .
+For example, the evaluation calculation
+add : ({ x, y }, e) 7→ e(x) + e(y)
+calculates the sum of the two variables x and y. We denote
+the set of all evaluation calculations by C(V, D).
+Deﬁnition 4. The set of speciﬁcations is
+S = V × 2V × C(V, D)
+We can specify transformations by providing a subset of S
+to the speciﬁcation function:
+Deﬁnition 5. The speciﬁcation function is a mapping
+s : 2S → (E(V, D) → E(V, D))
+S 7→ (e 7→ e′)
+where
+e′(x′) =
+m(V, e)
+if (x, V, m) ∈ S ∧ x′ = x
+e(x′)
+otherwise
+where ∀(x, V, m), (x′, V ′, m′) ∈ S [x = x′ =⇒ V = V ′ ∧
+m = m′]
+Deﬁnition 5 states that for each x ∈ V a speciﬁcation set
+S may contain at most one element (x, V, m). The uniqueness
+of x in S ensures that the speciﬁcation function s(S) is well-
+deﬁned as otherwise the deﬁnition for e′(x′) is ambiguous.
+We write (x, Vx, mx) for the single element for x in S if it
+exists and further associate the evaluation calculation mx with
+a term mx(Vx) that uses the variable symbols in Vx. We call
+the term mx(Vx) irreducible if there is no equivalent term in
+the underlying term algebra that uses fewer subterms, e.g., due
+to distributivity or the presence of zeros.
+Proposition 1. If there is no equality relationship between
+the variable symbols, expressed in the term algebra, then
+there exists a unique speciﬁcation set S where all evaluation
+calculation terms are irreducible.
+Proof: Let S, S′, S ̸= S′ be two speciﬁcation sets with
+irreducible evaluation calculation terms such that t = s(S) =
+s(S′). Then for all variables x ∈ V [mx(Vx) = m′
+x(V ′
+x)], i.e.,
+the terms are equivalent in the term algebra. Assume w.l.o.g.
+Vx contains a variable symbol y not contained in V ′
+x. Then
+either the term mx(Vx) can be rewritten in a way that elimi-
+nates y and mx(Vx) was not irreducible or the variable symbol
+y can not be eliminated. Then mx(Vx) = m′
+x(V ′
+x) constitutes
+a non-trivial equality relation between the variable symbols.
+Both cases contradict the assumption and thus S = S′.
+Deﬁnition 6. The speciﬁcation set of a transformation t is the
+unique set
+S(t) ⊂ S
+with irreducible evaluation calculation terms such that t =
+s(S(t)).
+The speciﬁcation set S(t) of a transformation t captures
+all modiﬁcations to the input evaluation function as every
+member (x, V, m) deﬁnes which (x) and how (m) a variable
+is modiﬁed. Thus, providing a speciﬁcation set for t fully
+characterizes t. Furthermore, using the speciﬁcation set we can
+derive the write and read characteristics of the transformation.
+Deﬁnition 7. The write set of a transformation t is
+W(t) =
+[
+(x,V,m)∈S(t)
+{ x }
+Deﬁnition 8. The read set of a transformation t is
+R(t) =
+[
+(x,V,m)∈S(t)
+V
+Moreover, to conveniently chain transformations together
+we deﬁne compound transformations in addition to the simple
+transformations.
+Deﬁnition 9. A compound transformation is a transformation
+tc = t1 ◦ t2 ◦ · · · ◦ tn
+such that e1
+tc
+−→ en+1 ≡ e1
+t1
+−→ e2
+t2
+−→ . . .
+tn
+−→ en+1.
+Note that ◦ denotes concatenation ((a◦b)(x) = b(a(x))) in
+contrast to composition ((a ◦ b)(x) = a(b(x))). For compound
+transformations the write and read sets can be derived from
+the individual transformations ti.
+Deﬁnition 10. The write set of a compound transformation tc
+is
+W(tc) =
+[
+i
+W(ti)
+Deﬁnition 11. The read set of a compound transformation tc
+is
+R(tc) =
+[
+i
+(R(ti) \
+[
+j<i
+W(tj))
+Using these deﬁnitions two cases exist where a transfor-
+mation ti may be removed from the transformation sequence
+T without changing eN. The cases can be described in the
+following way:
+1)
+no write
+W(ti) = ∅
+The transformation ti may be removed if the write
+set W(ti) is empty.
+Proof: As W(ti) = ∅
+=⇒
+S(ti) = ∅
+=⇒
+ti = I by deﬁnition we ﬁnd ei
+ti
+−→ ei+1 =⇒ ei =
+ei+1 and thus ei
+ti
+−→ ei+1
+ti+1
+−−→ ei+2 = ei
+ti+1
+−−→ ei+2.
+2)
+no read overwritten
+∀x ∈ W(ti) [j > i ∧ x ∈ R(tj) =⇒ ∃k [i < k <
+j ∧ x ∈ W(tk)]]
+The transformation ti may be removed if for all fol-
+lowing transformations tj that read a variable written
+by ti there is a transformation tk between ti and tj
+that writes that variable.
+Proof: Let e′
+i
+I−→ e′
+i+1 → · · · → e′
+M be the tran-
+sition sequence E′ that replaces ti with the identity
+transformation I in ei
+ti
+−→ ei+1 → · · · → eM. Note
+95
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+that the new transformation sequence is equivalent
+to removing ti in the old one. Now if we assume
+eM ̸= e′
+M then there must be a variable x such that
+eM(x) ̸= e′
+M(x). It follows that there must be a
+transformation tj, j < M, such that ej(x) = e′
+j(x)
+and ej+1(x) ̸= e′
+j+1(x) because ei = e′
+i. Hence, the
+variable x is written by tj, i.e., x ∈ W(tj). As x ∈
+W(tj), ej+1(x) = m(V, ej) for (x, V, m) ∈ S(tj)
+and there must be a variable v ∈ R(tj) such that
+ej(v) ̸= e′
+j(v) to satisfy m(V, ej) ̸= m(V, e′
+j). If
+j = i, we have a contradiction to the assumption
+ei = e′
+i and are ﬁnished. Otherwise, we apply the
+same argument to the variable v and would get
+another transformation tk, k < j, and a variable
+w ∈ R(tk) such that ek(w) ̸= e′
+k(w). This process
+leads to a contradiction to our assumption in at most
+M − i iterations.
+B. Use-Deﬁnition Chain Reduction
+The key idea of our approach is the construction of use-
+deﬁnition chains to identify transformations satisfying the
+requirements presented in Subsection V-A. A use-deﬁnition
+chain is a data structure that provides information about the
+origins of variable values: for every use of a variable the
+chain contains deﬁnitions that have inﬂuenced the variable and
+ultimately lead to the current value. Our idea is to adapt the
+deﬁnition-use chain technique from static data ﬂow analysis
+on a program’s source code to the state space reconstruction:
+every entry in the model’s difference bound matrix is treated
+as variable and thus is observed for uses and modiﬁcations.
+DBM entries are only modiﬁed by applying a state space
+transformation on the DBM. We thus analyzed the read and
+write access to matrix entries for every transformation to derive
+the use-deﬁnition chains where the transformations are the
+basic operations.
+We now propose an algorithm that removes the transforma-
+tions in question. Our algorithm consists of two smaller algo-
+rithms: the APPLY algorithm and the ELIMINATE algorithm.
+The APPLY algorithm is used to perform a transformation
+and the ELIMINATE algorithm removes unnecessary trans-
+formations in a sequence of applied transformations. Usage
+of the algorithms is assumed as follows: for a sequence of
+transformations T ﬁrst the APPLY algorithm is called on all
+transformations in order, then the ELIMINATE algorithm is
+executed to obtain the reduced transformation sequence. Note
+that a transformation sequence T could be split into two
+subsequent sequences T1 and T2 and the ELIMINATE algorithm
+could be run on the sequence T1 as soon as all transformations
+in T1 have been applied. Thus, the ELIMINATE algorithm
+can be run with an appropriate transformation sequence after
+every execution of APPLY , which achieves on-the-ﬂy removal.
+However, for formalization purposes, we assume the algorithm
+execution sequence given in Figure 2 where the initial map-
+pings c1, r1 and u1 satisfy ∀t ∈ T [c1(t) = 0 ∧ u1(t) =
+∅]∧∀x ∈ V[r1(x) = ⊥]∧c1(⊥) = |V|. The algorithm generates
+the following sequences:
+•
+Transformation sequence T = t1, t2, . . . , tN−1
+•
+Evaluation function sequence E = e1, e2, . . . , eN
+•
+Reference counter sequence C = c1, c2, . . . , cN
+t1
+APPLY
+t2
+APPLY
+t3
+APPLY
+tN−1
+APPLY
+ELIMINATE
+e1
+c1
+u1
+r1
+e2
+c2
+u2
+r2
+e3
+c3
+u3
+r3
+eN
+cN
+uN
+rN
+Figure 2.
+Algorithm Execution Sequence
+•
+Responsibility sequence R = r1, r2, . . . , rN
+•
+Use-deﬁnition sequence U = u1, u2, . . . , uN
+where a reference counter is a mapping c : T ∪ { ⊥ } → N0,
+a responsibility mapping is a mapping r : V → T ∪ { ⊥ }, and
+an use-deﬁnition mapping is a mapping u : T → 2T .
+Figure 3 shows the APPLY algorithm. The algorithm takes
+the to-be-applied transformation t, an evaluation function e,
+a reference counter c, a responsibility mapping r, and a use-
+deﬁnition mapping u as parameters. Except t all the parameters
+are stored locally in lines 2 to 5 to allow internal manipulations
+and the results are returned in lines 17 to 20. The algorithm
+can be divided into two parts, one handling the reads of the
+transformation t and one handling its writes. Lines 6 to 11
+process the variables read by t. For every variable xi it is
+determined if the transformation responsible for its current
+valuation r(xi) is already used by t in line 7. If r(xi) was not
+marked used yet it is marked used in line 9 and the reference
+counter is increased accordingly in line 8. Lines 12 to 16
+then handle the writes of t. First the evaluation function is
+updated to map xi to the value mi(Vi, e) as speciﬁed by the
+transformation. Then line 14 reduces the reference counter of
+the transformation previously responsible for the value of xi
+and line 15 updates the responsibility mapping such that now
+the transformation t is responsible for the value of xi. Lastly
+in the return section in line 18 the reference counter is set to
+|S(t)| to show that t is now responsible for |S(t)| variable
+valuations.
+Figure 4 shows the ELIMINATE algorithm. The algorithm
+takes a sequence of transformations T, a reference counter
+c, and a use-deﬁnition mapping u as parameters where all
+transformations in T must already have been applied with the
+APPLY algorithm. In lines 2 to 3 the transformation sequence
+and the reference counter are stored locally and the results of
+the algorithm are returned in lines 16 to 17. In between, in
+lines 4 to 15, a ﬁx point is calculated by removing as many
+transformations from T as possible. The algorithm checks
+for every transformation t in T if the reference counter c(t)
+evaluates to zero in line 7. If a transformation t satisﬁes
+c(t) = 0 the algorithm at ﬁrst removes t from T in line 8,
+then adjusts the reference counter by decreasing all counters of
+transformations used by t in lines 9 to 11, and lastly schedules
+another iteration of the ﬁx point calculation in line 12 as the
+modiﬁcations to the reference counters may induce additional
+removals.
+We now show the correctness of the algorithm. We assume
+that there implicitly is a transformation te appended to the
+transformation sequence T that satisﬁes R(te) = V to indicate
+that the ﬁnal calculated values are actually read and need to
+be recreated correctly. Otherwise, the whole transformation
+96
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+1: procedure APPLY(t, e, c, r, u)
+2:
+el ← e
+3:
+cl ← c
+4:
+rl ← r
+5:
+ul ← u
+6:
+for all xi ∈ R(t) do
+7:
+if r(xi) /∈ ul(t) then
+8:
+cl ← cl[r(xi) 7→ cl(r(xi))+1]
+9:
+ul ← ul[t 7→ ul(t) ∪ { r(xi) }]
+10:
+end if
+11:
+end for
+12:
+for all (xi, Vi, mi) ∈ S(t) do
+13:
+el ← el[xi 7→ mi(Vi, el)]
+14:
+cl ← cl[r(xi) 7→ cl(r(xi)) − 1]
+15:
+rl ← rl[xi 7→ t]
+16:
+end for
+17:
+e′ ← el
+18:
+c′ ← cl[t 7→ |S(t)|]
+19:
+r′ ← rl
+20:
+u′ ← ul
+21: end procedure
+Figure 3.
+APPLY Algorithm
+Require: ∀t ∈ T[APPLY(t, ...)]
+1: procedure ELIMINATE(T, c, u)
+2:
+Tl ← T
+3:
+cl ← c
+4:
+repeat
+5:
+b ← true
+6:
+for all t ∈ Tl do
+7:
+if cl(t) = 0 then
+8:
+Tl ← Tl \ { t }
+9:
+for all s ∈ u(t) do
+10:
+cl ← cl[s 7→ cl(s)−1]
+11:
+end for
+12:
+b ← false
+13:
+end if
+14:
+end for
+15:
+until b = true
+16:
+T ′ ← Tl
+17:
+c′ ← cl
+18: end procedure
+Figure 4.
+ELIMINATE Algorithm
+sequence T could be removed as no data is consumed. As
+a transformation t can only be removed in line 8 of the
+ELIMINATE algorithm, which is only executed if c(t) = 0,
+the following implications need to be shown to prove the
+algorithm.
+1)
+W(t) = ∅ =⇒ ∀c ∈ C [c(t) = 0]
+(⇒)
+If a transformation t does not write any variable then
+the transformation may be removed at any time.
+2)
+∀x ∈ W(ti) [∀tj ∈ T [i < j ∧ x ∈ R(tj) =⇒ ∃tk ∈
+T [i < k < j ∧ x ∈ W(tk)]]]
+=⇒
+∀cl ∈ C [l >
+max k =⇒ cl(ti) = 0]
+(⇒)
+If every variable written by a transformation ti is
+overwritten by transformations tk before it is read
+by a transformation tj then the transformation may
+be removed as soon as the last overwriting transfor-
+mation tk is performed.
+3)
+i < l ∧ cl(ti) = 0
+=⇒
+W(ti) = ∅
+∨
+∀x ∈
+W(ti)[∄tj ∈ T [i < j∧x ∈ R(tj)∧cl(tj) ̸= 0∧∀tk ∈
+T [i < k < j =⇒ x /∈ W(tk)]]]
+(⇐)
+If a transformation ti may be removed the transfor-
+mation either does not write any variable or every
+variable written by it is overwritten overwritten by
+transformations tk without being read beforehand.
+Derivation Note: Application of identities yields ∀x ∈
+W(ti) [∀tj ∈ T [i < j ∧ x ∈ R(tj)
+=⇒
+∃tk ∈
+T [i < k < j ∧ x ∈ W(tk)]]] ⇔ ∀x ∈ W(ti) [∄tj ∈
+T [i < j ∧ x ∈ R(tj) ∧ ∀tk ∈ T [i < k < j
+=⇒
+x /∈ W(tk)]]]. Adding cl(tj) ̸= 0 only makes sure
+the transformation can not be removed, i.e., it really
+exists.
+We ﬁrst derive two lemmas that characterize execution depen-
+dencies of certain lines in the algorithms to break the proof
+down into smaller parts.
+Lemma 1. Every execution of line 10 in the ELIMINATE
+algorithm is preceded by an execution of line 8 of the APPLY
+algorithm where r(x) = s for some variable x, i.e., for every
+decrease of cj(s) in line 10 there is an increase of ci(s) in
+line 8 where i < j.
+Proof: An execution of line 10 in the ELIMINATE al-
+gorithm for a transformation s implies s ∈ u(t) for some
+transformation t because of line 9. As only line 9 of the APPLY
+algorithm modiﬁes u an execution of it is implied where
+r(x) = s for some variable x. Additionally, line 10 may not
+be executed multiple times with the same transformation s for
+a single execution of line 8 because u(t) is a set and therefore
+does not contain duplicates of s and the transformation t is
+removed from Tl in line 8 rendering a subsequent access to
+u(t) impossible. It follows that every execution of line 10 in the
+ELIMINATE algorithm is paired with a preceeding execution of
+line 8 in the APPLY algorithm.
+Lemma 2. Before the execution of the APPLY algorithm for
+a transformation t there are zero variables xi that satisfy
+r(xi) = t. After its execution there are at all times at most
+|S(t)| variables xi that satisfy r(xi) = t for a transformation
+t.
+Proof: Only line 15 of the APPLY algorithm may modify
+r(x). A valuation satisfying r(x) = t can only be established
+when it is executed for the transformation t. In that case
+line 15 is executed |S(t)| times due to line 12 and because
+∀(xi, Vi, mi), (xj, Vj, mj) ∈ S(t) [xi ̸= xj] there are exactly
+|S(t)| variables xi that satisfy r(xi) = t after the execution of
+the APPLY algorithm for t. Because subsequent executions of
+line 15 always result in valuations r(x) ̸= t for a variable x it
+follows that the amount of variables xi that satisfy r(xi) = t
+may only be reduced. The proposition follows by taking into
+consideration that initially ∀x ∈ V [r(x) = ⊥].
+Corollary 1. Line 14 of the APPLY algorithm may be executed
+for a transformation t at most |S(t)| times, i.e., line 14 reduces
+c(t) by one at most |S(t)| times.
+Proof: An execution of line 14 for a transformation t
+implies that r(x) = t for a variable x. Additionally, the
+97
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+execution is always followed by an execution of line 15, which
+sets r(x) ̸= t. It follows that every execution of line 14 for a
+transformation t implies a reduction of the amount of variables
+that satisfy r(x) = t by one. It follows that line 14 may at
+most be executed |S(t)| times for a transformation t due to
+Lemma 2.
+We now prove the algorithm correct by showing that the
+presented requirements hold.
+1)
+W(t) = ∅ =⇒ ∀c ∈ C [c(t) = 0]
+Proof: There are four occurrences where refer-
+ence counters may be modiﬁed: in lines 8, 14 and
+18 of the APPLY algorithm and in line 10 of the
+ELIMINATE algorithm.
+a)
+APPLY algorithm, line 8
+Due to Lemma 2 W(t) = ∅
+=⇒
+S(t) =
+∅ =⇒ ∀r ∈ R [∄x ∈ V [r(x) = t]] and thus
+line 8 cannot modify c(t).
+b)
+APPLY algorithm, line 14
+Due to Lemma 2 W(t) = ∅
+=⇒
+S(t) =
+∅ =⇒ ∀r ∈ R [∄x ∈ V [r(x) = t]] and thus
+line 14 cannot modify c(t).
+c)
+APPLY algorithm, line 18
+As W(t) = ∅
+=⇒
+S(t) = ∅ line 18 sets
+c(t) to |S(t)| = 0 if APPLY is executed for t
+and c(t) is not modiﬁed otherwise.
+d)
+ELIMINATE algorithm, line 10
+As line 8 cannot modify c(t) (see above) line
+10 cannot modify c(t) due to Lemma 1.
+According to the case analysis it follows that c′(t) =
+c(t) or c′(t) = 0 for every application of the APPLY
+or ELIMINATE algorithm. Using that c1(t) = 0 it
+follows that W(t) = ∅
+=⇒
+∀c ∈ C[c(t) = 0]
+by induction.
+2)
+∀x ∈ W(ti) [∀tj ∈ T [i < j ∧ x ∈ R(tj) =⇒ ∃tk ∈
+T [i < k < j ∧ x ∈ W(tk)]]]
+=⇒
+∀cl ∈ C [l >
+max k =⇒ cl(ti) = 0]
+Proof: There are four occurrences where refer-
+ence counters may be modiﬁed: in lines 8, 14 and 18
+of the APPLY algorithm and in line 10 of the ELIM-
+INATE algorithm. We consider the transformation ti.
+a)
+APPLY algorithm, line 8
+Assume a transformation tj modiﬁes c(ti) in
+line 8. Then due to Lemma 2 it follows that
+i < j and ∃x ∈ V [r(x) = ti]. It follows
+that ∃x ∈ V [x ∈ R(tj) ∧ x ∈ W(ti)]
+must be satisﬁed. Thus, the inner premise
+in the proposition holds and there must be
+a transformation tk satisfying i < k < j
+and x ∈ W(tk). The execution of the APPLY
+algorithm for the transformation tk, however,
+then results in r(x) ̸= ti (see proof of
+Lemma 2) and tj can no longer modify
+c(ti). The premise thus prevents line 8 from
+modifying c(ti).
+b)
+APPLY algorithm, line 14
+As we are only interested in modiﬁcations to
+c(ti) we only need to consider executions for
+transformations tj, j > i due to Lemma 2 as
+line 14 requires ∃x ∈ V[r(x) = ti] to modify
+c(ti). According to Corollary 1 line 14 may
+reduce c(ti) maximally by |S(ti)|. The max-
+imum reduction occurs if ∀x ∈ W(ti) [∃tj ∈
+T [i < j ∧ x ∈ W(tj)]] (see proof of
+Corollary 1). According to the premise of
+the proposition this requirement is satisﬁed
+if ∀x ∈ W(ti) [∃tj ∈ T [i < j ∧ x ∈ R(tj)]].
+This requirement, however, is always satis-
+ﬁed because of the implicit transformation
+te at the end of the transformation sequence,
+which satisﬁes R(te) = V. It follows that
+the premise of the proposition implies the
+existence of a set of transformations Tr ⊆ T,
+which satisﬁes W(ti) ⊆ S
+t∈Tr W(t) and,
+thus, line 14 reduces c(ti) by |S(ti)| in total.
+c)
+APPLY algorithm, line 18
+As we are only interested in modiﬁcations to
+c(ti) we only need to consider the execution
+for ti. In that case line 18 sets c(ti) to
+|W(ti)| as |W(ti)| = |S(ti)|.
+d)
+ELIMINATE algorithm, line 10
+Due to Lemma 1 there is no execution of
+line 10 that modiﬁes c(ti) as there is no
+modiﬁcation of c(ti) in line 8 in the APPLY
+algorithm (see above).
+According to the case analysis c(ti) is modiﬁed
+in the following way: at ﬁrst line 18 sets c(ti) to
+|S(ti)|. Then the transformations from the set Tr
+are executed and lead to a monotonously descending
+c(ti) value (no reads). The execution of the last
+transformation from Tr results in a c(ti) = 0. This
+transformation is the transformation with the highest
+k of the transformations tk in the proposition as all
+transformations tk satisfy W(ti) ∩ W(tk) ̸= ∅. Thus
+∀cl ∈ C [l > max k =⇒ cl(ti) = 0] is satisﬁed and
+the proposition holds.
+3)
+i < l ∧ cl(ti) = 0
+=⇒
+W(ti) = ∅
+∨
+∀x ∈
+W(ti)[∄tj ∈ T [i < j∧x ∈ R(tj)∧cl(tj) ̸= 0∧∀tk ∈
+T [i < k < j =⇒ x /∈ W(tk)]]]
+Proof: There are three occurrences where refer-
+ence counters may be set or reduced to zero after ti is
+processed. Lines 14 and 18 of the APPLY algorithm
+and line 10 of the ELIMINATE algorithm potentially
+modify cl(ti) in such a way.
+a)
+APPLY algorithm, line 14
+In this case we prove i < l ∧ cl(ti) = 0 =⇒
+∀x ∈ W(ti) [∄tj ∈ T [i < j ∧ x ∈ R(tj) ∧
+cl(tj) ̸= 0 ∧ ∀tk ∈ T [i < k < j =⇒ x /∈
+W(tk)]]] by contraposition. Assume x to be a
+variable satisfying x ∈ W(ti) and assume tj
+to be a transformation satisfying i < j ∧ x ∈
+R(tj)∧cl(tj) ̸= 0∧∀tk ∈ T [i < k < j =⇒
+x /∈ W(tk)]. When executed tj increases
+cj(ti) in line 8 as x ∈ R(tj) and no interme-
+diate transformation tk invalidates r(x) = ti.
+Then for the transformation tl−1 to reduce
+cl(ti) to zero in line 14 it is necessary to
+revert the increase by an execution of line 10
+in the ELIMINATE algorithm before tl−1 is
+executed due to Corollary 1. Due to Lemma
+1 the reduction must result from c(tj) being
+reduced to zero (ELIMINATE algorithm, line
+98
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+7) as otherwise additional increases would
+have happened in line 8 beforehand. Assume
+tm, j < m < l − 1 to be the transformation
+that reduced cm+1(tj) to zero to revert the
+increase of cj(ti). We ﬁnd that cm+1(tj) =
+0 =⇒ cl(tj) = 0 unless c(tj) is increased
+again between the execution of tm and tl−1.
+However, a reduction of c(t) to zero implies
+∄x ∈ V [r(x) = t] and thus such an increase
+is impossible. It follows that if tj exists cl(ti)
+can not be reduced to zero.
+b)
+APPLY algorithm, line 18
+Line 18 may only modify cl(ti) if APPLY
+is executed for ti. In that case cl(ti) is
+set to zero if |S(ti)| = 0. As |S(ti)| =
+0
+=⇒
+W(ti) = ∅ it follows that in this
+case cl(ti) = 0 =⇒ W(ti) = ∅, which is
+part of the proposition.
+c)
+ELIMINATE algorithm, line 10
+If line 10 reduces cl(ti) to zero then there
+must have been a reduction of a different
+reference counter to zero beforehand as line
+7 requires c(t) = 0. As this argument holds
+recursively a reduction in line 10 ultimately
+implies a reduction due to either line 14
+or line 18 in the APPLY algorithm. Thus, a
+reduction in line 10 implies the implications
+for those lines found above.
+Combining the case analysis results with the premise
+i < l ∧ cl(ti) results in all cases in either W(ti) = ∅
+or ∀x ∈ W(ti)[∄tj ∈ T [i < j ∧x ∈ R(tj)∧cl(tj) ̸=
+0 ∧ ∀tk ∈ T [i < k < j =⇒ x /∈ W(tk)]]] yielding
+the proposition.
+C. Algorithm Application to UPPAAL
+We now specialize the general formalization to UPPAAL’s
+state space and transformation system such that we may apply
+the presented reduction method to UPPAAL models. The re-
+duction is only relevant for the time state of UPPAAL because
+the data and location states may be modiﬁed directly during
+on-line model checking. Only the time state has constraints that
+may be invalidated by individual changes to the time state.
+Consider an UPPAAL model M with the clock set C. The
+time state of M can be represented with a difference bound
+matrix containing |C0|2 entries. Therefore, in our specialization
+the variable set V contains that many variables: |V| = |C0|2.
+The domain of the variables (D) is K because every variable
+represents an DBM entry. We refer to the variables by DBMr,c
+where r denotes the row number and c denotes the column
+number. Next, we deﬁne UPPAAL’s DBM transformations for
+our formalization. As presented in Section IV, the relevant
+transformations are the Clock Reset (RESET(x, v)), the Con-
+straint Introduction (CONSTRAINT(x, y, v, ⪯)), and the Bound
+Elimination (UP):
+RESET(x, v)
+Sets the clock variable x
+to the value v and adjusts
+constraints on that clock
+accordingly
+CONSTRAINT(x, y, v, ⪯)
+Introduces a new upper
+bound on a clock or on
+a difference of clocks and
+propagates dependencies
+UP
+Removes
+the
+upper
+bounds on every clock
+but not on differences of
+clocks
+Four speciﬁcation calculations are necessary to specify these
+transformations, where two assign values based on constants
+and two calculate minima. The ﬁrst two are the assign(v) cal-
+culation and the add(v) calculation: assign(v) simply assigns
+the constant value v to a variable; add(v) calculates the sum
+of the constant value v and the current evaluation of a variable
+and assigns it:
+assign : K → (2V × E(V, D) → K)
+v 7→ ((∅, e) 7→ v)
+add : K → (2V × E(V, D) → K)
+v 7→ (({ x }, e) 7→ e(x) + v)
+The minima calculations are minassign(v) and minadd(). As-
+signing a variable with minassign(v) results in an evaluation
+equal to the minimum of v and the evaluation of the comparing
+variable. minadd() checks whether the sum of two variable
+evaluations is smaller than a third evaluation and if so assigns
+the sum:
+minassign : K → (2V × E(V, D) → K)
+v 7→ (({ x }, e) 7→ min(e(x), v))
+minadd : 2V × E(V, D) → K
+({ x, y, z }, e) 7→ min(e(x), e(y) + e(z))
+Providing adequate speciﬁcation sets S(t) with these speciﬁ-
+cation calculates now allows deﬁning the transformations UP,
+RESET(x, v), and CONSTRAINT(x, y, v, ⪯). For convenience
+we use ix and iy for the indices of the clocks x and y in the
+DBMs. The UP transformation begins straight-forward: setting
+all values in the ﬁrst DBM column except the top-most one to
+∞ removes the upper bounds on the clocks:
+S(UP) = { (DBMi,1, ∅, assign(∞)) | 1 < i ≤ |C0| }
+The RESET(x, v) transformation performs two actions. First,
+it sets x to v, i.e., it sets both bounds to v. Then constraints
+in the clock’s row and column are adjusted. A compound
+transformation models this behavior:
+RESET(x, v) = ts ◦ tp
+S(ts) = { (DBMix,1, ∅, assign((v, ≤))),
+(DBM1,ix, ∅, assign((−v, ≤))) }
+S(tp) = { (DBMix,i, { DBM1,i }, add((v, ≤))),
+(DBMi,ix, { DBMi,1 }, add((−v, ≤)))
+| 1 < i ≤ |C0| }
+At last, the CONSTRAINT(x, y, v, ⪯) transformation ﬁrst in-
+troduces the constraint x − y
+⪯ v and then propagates
+99
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+it to depending constraints. Note that the propagation itself
+also is divided into multiple transformations as subsequent
+transformations require previous calculations:
+CONSTRAINT(x, y, v, ⪯) = tc ◦
+t1,1 ◦ · · · ◦ t1,|C0| ◦
+t2,1 ◦ · · · ◦ t2,|C0| ◦
+...
+t|C0|,1 ◦ · · · ◦ t|C0|,|C0|
+ti,j = ti,j,1 ◦ ti,j,2
+S(tc) = { (DBMix,iy, { DBMix,iy }, minassign((v, ⪯))) }
+S(ti,j,1) = { (DBMi,j, { DBMi,j, DBMi,ix, DBMix,j },
+minadd) }
+S(ti,j,2) = { (DBMi,j, { DBMi,j, DBMi,iy, DBMiy,j },
+minadd) }
+D. Reconstruction Summarized
+The complete state space reconstruction process consists
+of three steps:
+1)
+Initialization Canonize model by introducing general
+starting points for later model synthesis, extract nec-
+essary information from the model, e.g., clock and
+variable deﬁnitions.
+2)
+Simulation Select transitions in the model according
+to intended behavior, execute and store them. Si-
+multaneously break them down into matching state
+space transformations and use the APPLY algorithm
+to internally construct the use-deﬁnition chains of the
+transformations. Then use the ELIMINATE algorithm
+to remove unnecessary transformations on-the-ﬂy by
+evaluating the reference counters.
+3)
+Synthesis Group the sequence of reduced transforma-
+tions to form valid transitions and add the transitions
+to a newly created model obtained from the original
+one. The last transitions connect to the current lo-
+cations when the reconstruction was initiated. Those
+transitions also update the data state.
+Note that the synthesis of the actual UPPAAL model
+from the reduced transformation sequence has to take into
+consideration that UPPAAL allows a single automaton to be
+instantiated multiple times with possibly different parameters.
+During initialization of the reconstruction we therefore analyze
+the model deﬁnitions for automaton instantiation and save
+the relevant parameters. Also, as the location space needs to
+be correctly reconstructed an automaton that is instantiated
+multiple times has multiple initializations transitions for every
+instantiation. We use a single bounded integer variable in
+conjunction with appropriate guards to correctly order these
+transitions. Another important aspect of the synthesis step is
+that the model initialization needs to be self-contained, i.e.,
+the initialization of multiple automata needs to ﬁnish syn-
+chronously to prevent parts of the model from advancing pre-
+maturely. As the initialization transitions per automaton may
+differ in length we employ a broadcast channel to synchronize
+the last transition to the original model. We use these ﬁnal
+transitions to initialize the data variables as well. In case global
+variables are present an additional init automaton is introduced
+TABLE I.
+EVALUATION RESULTS
+Model
+Transitions
+Transformations
+Before
+After
+Reduction
+Before
+After
+Reduction
+2doors
+100
+65.89
+34.1%
+364.7
+254.46
+30.2%
+bridge
+100
+68.21
+31.8%
+188.39
+144.09
+23.5%
+train-gate
+100
+66.18
+33.8%
+320.09
+214.17
+33.1%
+ﬁscher
+100
+91.27
+8.7%
+345.33
+249.46
+27.7%
+csmacd2
+100
+100
+0%
+709.71
+434.19
+38.8%
+csmacd32
+75.58
+75.58
+0%
+1818.6
+327.49
+79.7%
+tdma
+100
+68.16
+31.8%
+719.88
+240.11
+66.6%
+2doors
+1000
+627.9
+37.2%
+3722.3
+2612.9
+29.8%
+bridge
+1000
+641.3
+35.9%
+1882.8
+1436.4
+23.7%
+train-gate
+1000
+606.1
+39.4%
+3200.1
+2194.1
+31.4%
+ﬁscher
+1000
+853
+14.7%
+3455.3
+2486.8
+28%
+csmacd2
+1000
+1000
+0%
+7238.1
+4375.5
+39.5%
+csmacd32
+619.6
+619.6
+0%
+22491.1
+2540.3
+84%
+tdma
+1000
+663.1
+33.7%
+6446.3
+2651.5
+58.9%
+for their initialization. Figure 5 shows the reconstruction model
+for the example model (Figure 1) after 2 transitions on the
+right side. The additional initialization automaton is shown
+on the left. It sets the global, bounded integer c to 1. The
+clock x is set to 0 and the location is correctly initialized to
+Count after an initial ﬁrst transition. The reconstructed model
+only needs to execute a single transition in contrast to the
+original model, which uses two to reach the correct state.
+For DBM transformations the reconstructed model uses three
+transformations while the original model needs seven.
+VI.
+EVALUATION
+We evaluated our use-deﬁnition reconstruction method by
+applying it to seven different UPPAAL models and comparing
+it to the naive reconstruction approach. The models 2doors,
+bridge, train-gate, and ﬁscher are part of the UPPAAL example
+model suite. The csmacd models and tdma were taken from
+case studies [21][22]. We ran two test sets for every model.
+The ﬁrst test executed 100 times 100 random transitions of
+the model before reconstructing the state. The second test set
+executed 1000 random transitions 10 times. For the csmacd32
+model it was not always possible to execute the maximum
+number of transitions during simulation as the model exhibits
+deadlock states. Table I shows our evaluation results. In the top
+half the results of the ﬁrst test set and in the bottom half the
+results of the second test set are shown. All values are averages
+over the respective test runs but their variances are small. In
+our experiments the reduction of transformations is between
+23% and 84% while the reduction of transitions is between 0%
+and 39.4%. This difference mainly stems from the fact that to
+delete a single transition all induced transformations need to
+be removed. However, our model synthesis algorithm still is
+unoptimized and sometimes produces unnecessary transitions.
+In cases where the transition reduction is higher than the
+transformation reduction the removal of transformations made
+it possible to merge multiple transitions. Interestingly, the cs-
+macd models contain use-deﬁnition chains spanning the whole
+simulation, which prevent removal of transitions though many
+transformations are irrelevant to the state. Future work will
+need to address this issue, e.g., by also evaluating concrete state
+values. Regarding total execution time, our adjustments have a
+small impact as the model checking procedure consumes most
+100
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+c = 1, __uoi_edges = 0
+__uoi_c?
+INITIALIZED
+__uoi_edges == 0
+UOI_INIT
+x = 0,
+c = (c + 1) % 7
+x = 0,
+c = 0
+x = 1
+x = 0, __uoi_edges++
+x <= 2
+Inv
+Init
+Count
+UOI_INIT_Process
+__uoi_c!
+x >= 3
+__uoi_edges == 0
+x >= 3
+Figure 5.
+Reconstructed example model
+of the time. Also, compared to the model checking part our
+approach scales well with the complexity of the used models.
+VII.
+CONCLUSION AND FUTURE WORK
+In this paper, we addressed the problem of state space
+reconstruction of UPPAAL models in the context of on-line
+model checking. Our reconstruction method uses use-deﬁnition
+chains to track inﬂuence of individual transformations on
+the state space during model simulation. An algorithm for
+the chain construction with reference counters was presented.
+It is able to identify and remove transformations in the
+transformation sequence that do not have an impact on the
+ﬁnal state space. We provided proofs for the algorithm itself
+and the requirements for the removal of a transformation
+without altering the ﬁnal state. The reconstruction process was
+implemented in a prototype implementation and compared to
+the naive reconstruction approach, which does not remove
+any transformations. Seven UPPAAL models from different
+sources were analyzed and our approach reduced the amount
+of transformations necessary for reconstruction by 23% to 84%
+and reduced model transitions by up to 39.4%.
+The prototype implementation is part of our UPPAAL on-
+line model checking interface that is currently in development.
+Interestingly, this interface could not only be used to automat-
+ically carry out on-line model checking. The interface also
+allows generic dynamic adaptation of model parameters. In
+the future enhancing on-line model checking by combining
+it with parameter learning algorithms and model calibration
+methods might broaden the applicability of model checking
+even further.
+However, the proposed reconstruction method still yields
+infeasible reconstruction sequences for real-time on-line model
+checking in general as the reconstruction sequence length still
+grows over time. A reconstruction sequence of constant length
+is desirable to ensure real-time properties. Future research
+thus also need to focus on further optimizing the proposed
+reconstruction method. For example, the proposed method
+currently only relates transformations according to read and
+write accesses. Concrete variable values are not taken into ac-
+count. Transformations that produce the same values could be
+removed, but are currently not. Experience during development
+has shown that such transformations occur often especially
+in periodic use-deﬁnition chains that arise due to cycles in
+the model. Removal of them could improve the reconstruction
+sequence signiﬁcantly by breaking such cycles.
+REFERENCES
+[1]
+J. Rinast, S. Schupp, and D. Gollmann, “State space reconstruction for
+on-line model checking with UPPAAL,” in VALID 2013, The Fifth
+Internation Conference on Advances in System Testing and Validation
+Lifecycle, 2013, pp. 21–26.
+[2]
+T. Li, Q. Wang, F. Tan, L. Bu, J.-n. Cao, X. Liu, Y. Wang, and
+R. Zheng, “From ofﬂine long-run to online short-run: Exploring a new
+approach of hybrid systems model checking for MDPnP,” in 2011 Joint
+Workshop on High Conﬁdence Medical Devices, Software, and Systems
+and Medical Device Plug-and-Play Interoperability (HCMDSS-MDPnP
+2011), 2011.
+[3]
+T. Li, F. Tan, Q. Wang, L. Bu, J.-N. Cao, and X. Liu, “From ofﬂine
+toward real-time: A hybrid systems model checking and cps co-design
+approach for medical device plug-and-play (MDPnP),” in Proceedings
+of the 3rd ACM/IEEE International Conference on Cyber-Physical
+Systems - ICCPS ’12.
+Beijing, China: IEEE, April 2012, pp. 13–22.
+[4]
+A. Hessel, K. G. Larsen, M. Mikucionis, B. Nielsen, P. Pettersson,
+and A. Skou, “Testing real-time systems using UPPAAL,” in Formal
+Methods and Testing, R. M. Hierons, J. P. Bowen, and M. Harman,
+Eds.
+Springer Berlin Heidelberg, 2008, pp. 77–117.
+[5]
+Z. Qi, A. Liang, H. Guan, M. Wu, and Z. Zhang, “A hybrid model
+checking and runtime monitoring method for C++ web services,” in
+2009 Fifth International Joint Conference on INC, IMS and IDC.
+Seoul, South Korea: IEEE, 2009, pp. 745–750.
+[6]
+A. Easwaran, S. Kannan, and O. Sokolsky, “Steering of discrete event
+systems: Control theory approach,” Electronic Notes in Theoretical
+Computer Science, vol. 144, no. 4, 2006, pp. 21–39.
+[7]
+G. Sauter, H. Dierks, M. Fr¨anzle, and M. R. Hansen, “Light-weight
+hybrid model checking facilitating online prediction of temporal prop-
+erties,” in 21st Nordic Workshop on Programming Theory, NWPT 09,
+vol. 2, Lyngby, Denmark, 2009.
+[8]
+D. Arney, M. Pajic, J. M. Goldman, I. Lee, R. Mangharam, and
+O. Sokolsky, “Toward patient safety in closed-loop medical device
+systems,” in Proceedings of the 1st ACM/IEEE International Conference
+on Cyber-Physical Systems - ICCPS ’10.
+Stockholm, Sweden: ACM
+New York, NY, USA, 2010, pp. 139–148.
+[9]
+R. Alur and D. L. Dill, “A theory of timed automata,” Theoretical
+Computer Science, vol. 126, no. 2, 1994, pp. 183–235.
+[10]
+W. Yi, P. Pettersson, and M. Daniels, “Automatic veriﬁcation of real-
+time communicating systems by constraint-solving,” in 7th International
+Conference on Formal Description Techniques, D. Hogrefe and S. Leue,
+Eds., 1994, pp. 223–238.
+[11]
+K. G. Larsen, P. Pettersson, and W. Yi, “Compositional and symbolic
+model-checking of real-time systems,” in Real-Time Systems Sympo-
+sium, Pisa, Italy, 1995, pp. 76–87.
+[12]
+J. Bengtsson, B. Jonsson, J. Lilius, and W. Yi, “Partial order reductions
+for timed systems,” in CONCUR’98 Concurrency Theory, D. Sangiorgi
+and R. de Simone, Eds.
+Springer Berlin Heidelberg, 1998, pp. 485–
+500.
+[13]
+K. G. Larsen, F. Larsson, P. Pettersson, and W. Yi, “Efﬁcient veriﬁcation
+of real-time systems: compact data structure and state-space reduction,”
+in Real-Time Systems Symposium, San Francisco, CA, USA, 1997, pp.
+14–24.
+[14]
+K. G. Larsen, F. Larsson, P. Pettersson, and W. Yi, “Compact data struc-
+101
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+tures and state-space reduction for model-checking real-time systems,”
+Real-Time Systems, vol. 25, no. 2-3, 2003, pp. 255–275.
+[15]
+J. Bengtsson, “Reducing memory usage in symbolic state-space ex-
+ploration for timed systems,” Department of Information Technology,
+Uppsala University, Uppsala, Sweden, Tech. Rep. May, 2001.
+[16]
+G. Behrmann, A. David, and K. G. Larsen, “A tutorial on Uppaal
+4.0,” Department of Computer Science, Aalborg University, Aalborg,
+Denmark, Tech. Rep., 2006.
+[17]
+G. Behrmann, J. Bengtsson, A. David, K. G. Larsen, P. Pettersson, and
+W. Yi, “UPPAAL implementation secrets,” in Formal Techniques in
+Real-Time and Fault-Tolerant Systems, W. Damm and E.-R. Olderog,
+Eds.
+Oldenburg, Germany: Springer-Verlag Berlin, 2002, pp. 3–22.
+[18]
+J. Bengtsson and W. Yi, “Timed automata: Semantics, algorithms and
+tools,” in Lectures on Concurrency and Petri Nets, J. Desel, W. Reisig,
+and G. Rozenberg, Eds.
+Springer Berlin Heidelberg, 2004, ch. 3, pp.
+87–124.
+[19]
+J. Bengtsson, “Clocks, dbms and states in timed systems,” Ph.D.
+dissertation, Uppsala University, 2002.
+[20]
+J. Rinast, S. Schupp, and D. Gollmann, “A graph-based transforma-
+tion reduction to reach UPPAAL states faster,” in 19th International
+Symposium on Formal Methods 2014 (FM2014), ser. Lecture Notes in
+Computer Science.
+Springer Verlag, 2014, pp. 547–562.
+[21]
+S. Yovine, “KRONOS: a veriﬁcation tool for real-time systems,” Inter-
+national Journal on Software Tools for Technology Transfer, vol. 1, no.
+1-2, 1997, pp. 123–133.
+[22]
+H. L¨onn and P. Pettersson, “Formal veriﬁcation of a tdma protocol
+start-up mechanism,” in Paciﬁc Rim International Symposium on Fault-
+Tolerant Systems (PRFTS ’97).
+Taipei: Ieee, 1997, pp. 235–242.
+102
+International Journal on Advances in Systems and Measurements, vol 7 no 1 & 2, year 2014, http://www.iariajournals.org/systems_and_measurements/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+

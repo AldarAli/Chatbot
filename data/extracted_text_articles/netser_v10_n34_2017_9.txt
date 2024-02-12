@@ -1,0 +1,850 @@
+152
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+Design and Implementation of Veriﬁcation Based OpenFlow Hypervisor
+for Multi-Tenant Virtualized Network
+Shun Higuchi
+Graduate School of Computer and Information Science
+Hosei University
+Tokyo, Japan
+Email: shun.higuchi.6j@stu.hosei.ac.jp
+Toshio Hirotsu
+Faculty of Computer and Information Science
+Hosei University
+Tokyo, Japan
+Email: hirotsu@hosei.ac.jp
+Abstract—Cloud services that virtualize existing IT infrastruc-
+tures in data centers are widely used by governments, universities,
+and companies. Multi-tenancy is an indispensable feature for
+data centers to provide a large number of isolated networks
+to different organizations. OpenFlow is a core technology of
+software deﬁned networking (SDN) and is useful for centrally
+managing and controlling these networks; however, SDN is used
+only at the management level. It is desirable to make the
+ﬂexible features of SDN/OpenFlow available to users’ virtual
+networks. FlowVisor provides virtualized multi-tenant OpenFlow
+networks by coordinating multiple controllers, but it is unable
+to prevent conﬂicts among the control rules of individual virtual
+networks. Administrators of each tenant thus need to design the
+speciﬁcations of each virtual network carefully. In this paper,
+we propose a veriﬁcation-based scheme for coordinating multiple
+tenants’ OpenFlow networks. The scheme enables administrators
+to design their own virtual networks without considering conﬂicts
+with other tenants. A ﬂow space manager manages overlaps of the
+address spaces and resolves conﬂicts between rules of different
+tenants; in so doing, isolation is preserved transparently for each
+tenant.
+Keywords–OpenFlow; Virtualization; Multi-tenant Network.
+I.
+INTRODUCTION
+With the development of server virtualization technology,
+cloud computing services, such as Infrastructure as a Service
+(IaaS), have become popular. Here, an organization’s IT in-
+frastructure is consolidated in a data center by using server
+virtualization and is provided through the Internet. In multi-
+tenant networks, one physical network is divided into many
+virtual tenant networks. The trafﬁc in each virtual network
+needs to be isolated from the trafﬁc in other networks. Virtual
+LAN (VLAN) is a popular isolation technology. IaaS providers
+deﬁne many virtual layer 2 tenant networks by assigning
+VLAN-IDs to each tenant; the tenants ’administrators then
+construct their own layer 3 networks by using the VLANs. On
+an IaaS cloud using VLAN technology, the IaaS administrator
+needs to change the conﬁguration of the VLAN on all related
+network devices in order to modify the virtual tenant networks.
+However, in such environments, demand is growing for an
+efﬁcient means of changing, i.e., creating, modifying and
+destroying, virtual networks; what is required is a more ﬂexible
+virtual network construction and management method.
+OpenFlow [3], which is a core technology of software-
+deﬁned networking (SDN) [2], enables ﬂexible routing control
+and centralized management of networks by separating the
+control plane from the data transfer plane. A controller deﬁnes
+the routing of packet forwarding, and the data plane switches
+transfer packets in accordance with the instructions of the con-
+troller. Since this technology has the ability to recognize and
+rewrite the VLAN-ID of each packet, IaaS providers can ag-
+gregate VLAN management functionalities into one controller.
+The OpenFlow based network architecture enables ﬂexible
+virtual network management for IaaS providers; however, a
+tenant network is not allowed to use OpenFlow functionalities
+to avoid confusion with cloud management level controls.
+This means administrators of tenant networks can not gain
+the beneﬁts of OpenFlow even if the provider uses OpenFlow
+technology to manage its IaaS platform. In contrast, effectively
+coordinating multiple OpenFlow networks would enable all
+tenants to manage their own virtual tenant networks by using
+OpenFlow on a physical network.
+FlowVisor [4] is one idea for handling requests from
+multiple OpenFlow controllers. In FlowVisor, a proxy is placed
+between the OpenFlow controller and the switches, and it
+exchanges and manages each tenant’s control messages sent
+between the controllers and switches. OpenFlow switches
+on physical networks work properly under the control of
+FlowVisor, which coordinates multiple tenant controllers. In
+FlowVisor, each isolated virtual network space is expressed
+as a ﬂow space. The administrator of a ﬂow space needs to
+regulate the OpenFlow controller to write ﬂow entries under
+the restrictions of the allocated ﬂow space deﬁnition. This
+mechanism can be used to construct a plurality of virtual
+OpenFlow networks, and it enables each tenant controller to
+control their virtual tenant networks individually; however,
+FlowVisor does not avoid overlaps between ﬂow spaces. When
+using FlowVisor to isolate multiple OpenFlow tenant networks,
+each tenant network is expected to obey the ﬂow space def-
+inition provided by the IaaS provider. This problem becomes
+more complicated because the ﬂow speciﬁcations used in the
+networks are not always exclusive. In the case of monitoring
+one tenant’s network from another management network, the
+ﬂow speciﬁcations allocated to each network’s ﬂow space must
+overlap. The IaaS provider needs to deﬁne them very carefully
+so as not to cause unintended trafﬁc control.
+In this research, we propose a veriﬁcation-based OpenFlow
+network virtualization based on OpenFlow hypervisor that
+enables the network to be freely designed by each tenant.
+To guarantee isolation of tenant networks, we introduce a
+
+153
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+conﬂict management system that uses veriﬁcation of ﬂow space
+deﬁnitions. When a conﬂict occurs, the management system
+detects it and resolves the conﬂict by rewriting a ﬂow entry.
+Our approach veriﬁes and manages overlapping parts of the
+ﬂow spaces deﬁned by individual tenants, detects conﬂicts
+between ﬂow spaces and ﬂow entries, and rewrites the entries
+to avoid conﬂicts in the FlowVisor. This paper describes the
+method of ﬂow space veriﬁcation and its implementation based
+on our proposed mechanisms [1]. Section II is an overview of
+OpenFlow/SDN technology. Section III explains the mecha-
+nism and problems of FlowVisor. Section IV outlines the pro-
+posed virtualization method based on ﬂow entry veriﬁcation,
+and Section V describes the method for avoiding ﬂow entry
+conﬂicts in more detail. Section VI describes our prototype
+implementation and its performance evaluation. Section VII
+discusses our method in relation with other research. Section
+VIII is a conclusion that mentions future work.
+II.
+OPENFLOW/SDN
+OpenFlow is a representative architecture of software-
+deﬁned networking, and it is currently being standardized. It
+is a next-generation network technology for cloud computing
+environments. An OpenFlow network consists of an OpenFlow
+controller responsible for routing control and an OpenFlow
+switch for transferring packets according to ﬂow entries written
+by the controller. Hence, it is a centralized control architecture
+that enables centralized management of networks by separating
+the traditional network system into a control plane and data
+plane.
+The controller is software, and a pair of matching ﬁelds,
+such as a MAC address, an IP address, a transport number, a
+VLAN-ID, and the actions to be performed on a packet are
+deﬁned as a ﬂow entry. Flexible routing control is enabled by
+transferring packets according to ﬂow entries in the switch.
+If the switch has to be reconﬁgured in response to a change
+in the network conﬁguration, the change is applied to all
+the switches by describing the change settings as new ﬂow
+entries in the controller. This improves the manageability of
+the network. The controller and switch are connected by an
+OpenFlow channel, which is a control network using TCP/IP
+that is constructed separately from the data network, and
+they exchange control messages called OpenFlow messages
+through it. Through OpenFlow messages, the controller con-
+trols switches such as for writing the ﬂow entry. In OpenFlow,
+since the controller controls all the switches and knows the
+network topology, it is possible for it to control routing ﬂexibly
+such as through source routing and multi-path forwarding.
+Virtualizing a physical network by using OpenFlow makes it
+possible not only to improve the manageability of VLAN-IDs
+but also to ensure logical division of the network by using the
+packet headers of layers 1 to 4 that can be speciﬁed as a match
+ﬁeld. OpenFlow enables its users to create a number of virtual
+networks beyond the usual limits of VLAN-IDs by dividing
+up the used address space in advance.
+However, the conventional OpenFlow technology has some
+problems when it comes to virtualizing and controlling the
+OpenFlow network itself. For example, it is not possible to
+control each switch individually from multiple controllers in
+one OpenFlow network. Moreover, there is no mechanism to
+logically divide one OpenFlow network into multiple virtual
+OpenFlow networks. These problems make it impossible for
+Figure 1. FlowVisor
+a tenant to construct and control each controller or devise a
+virtual OpenFlow network in a multi-tenant data center that
+provides IaaS.
+III.
+FLOWVISOR
+A FlowVisor is placed in the controller and switches, as
+shown in Figure 1. It operates as a proxy that transfers the
+OpenFlow messages necessary to control the switch from
+the controller. The administrator of FlowVisor deﬁnes the
+available network space to each tenant as a ﬂow space and
+presents a ﬂow space deﬁnition to each tenant user in some
+way. Tenant users create their own controllers that write ﬂow
+entries in accordance with the network topologies and ﬂow
+space deﬁnitions of the tenants’ OpenFlow networks presented
+to them by the FlowVisor administrator. A tenant user can
+control the tenant network by connecting his/her controller to
+FlowVisor.
+A. Flow Space
+The administrator of FlowVisor deﬁnes a network space
+called a ”ﬂow space” that expresses the ranges of network
+parameters allowed to each tenant beforehand. Table I shows
+an example of a ﬂow space. The ﬂow space deﬁnition holds a
+slice name indicating the name of the tenant network, a DPID
+that indicates the OpenFlow switch ID, and a MAC address,
+IP address, transport number, etc., as an available match ﬁeld
+from layer 1 to 4 in a ﬂow entry and priority. In addition, each
+ﬂow space is based on the premise that the deﬁned network
+space is independent and has no overlaps. Therefore, there is
+no mechanism in FlowVisor for checking whether ﬂow space
+conﬂicts exist; hence, the administrator needs to deﬁne each
+ﬂow space carefully.
+
+154
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+TABLE I. EXAMPLES OF FLOW SPACE
+Slice
+DPID
+Priority
+VLAN
+Src MAC
+Dst MAC
+Src IP
+Dst IP
+Src TCP
+Dst TCP
+Tenant A
+1
+100
+50
+*
+*
+*
+*
+80, 22
+*
+Tenant B
+1
+100
+50
+*
+*
+10.0.1.0/24
+*
+80
+*
+Tenant C
+1
+100
+50
+*
+*
+10.0.2.0/24
+*
+80
+*
+B. FlowVisor Mechanism
+FlowVisor functions as a proxy on the OpenFlow channel
+and controls the transfer of OpenFlow messages between mul-
+tiple controllers and switches. This function differs between the
+case of transferring messages from the switch to the controller,
+such as when sending Packet-In and Port-Status messages, and
+the case of forwarding messages from the controller to the
+switch, such as when sending the Flow-Mod message.
+First, we describe the messages that are transferred from
+the switch to the controller. In this case, it is necessary to
+specify the controller to which the message pertains before
+transferring the message to it. As an example, a Port-Status
+message notifying that the physical port state of the switch
+has changed will affect all the tenant controllers using that
+port. Accordingly, FlowVisor searches for all target controllers
+from the topology information of each tenant network and
+transfers the Port-Status message to all of them. In the case
+of a Packet-In message, FlowVisor searches the ﬂow space
+deﬁnition to specify which tenant network the packet belongs
+to and forwards the message to the tenant controller of the
+corresponding ﬂow space.
+Next, we describe the messages that are transferred from
+the controller to the switch. In this case, FlowVisor refers to
+the topology information of all the tenant networks; then it
+transfers the message to the target switch; it performs the same
+operation on every message. If a tenant user tries to send a
+message to a switch that does not belong to its own tenant
+network, the send operation fails and a message transfer error
+is returned to the controller.
+C. FlowVisor Problem
+FlowVisor is based on the premises that the ﬂow spaces
+allocated to each tenant network are independent and the tenant
+controller sets ﬂow entries within the allocated ﬂow space. If
+a FlowVisor administrator deﬁnes an unintended or incorrect
+ﬂow space content, an unexpected network control will be
+executed. This problem can be discussed from a different
+viewpoint that the IaaS provider forces each tenant to restrict
+his/her network design, as shown in Figure 2(a). In contrast, if
+IaaS providers want to enable each tenant user to freely design
+their own tenant network, as shown in Figure 2(b), each tenant
+user should be able to deﬁne their ﬂow space freely. This,
+however, leads to a problem that unintended trafﬁc control can
+occur when a ﬂow entry is written that conﬂicts with the ﬂow
+space of another tenant. Hence, it is necessary to implement
+a mechanism that can check for conﬂicts in ﬂow spaces and
+ﬂow entries in a multi-tenant network.
+Table I shows an example of conﬂicting ﬂow entries,
+wherein tenant user A tries to write a ﬂow entry that prohibits
+the SSH session such as by sending“Src TCP = 22, action =
+DROP“ to the switch with DPID = 1. In the table, the match
+ﬁelds of tenant A are deﬁned as wildcard values “ * “ with
+the exception of Src TCP; thus, tenant user A can freely use
+(a) FlowVisor
+(b) Ideal for IaaS
+Figure 2. Network Design Policy
+this value. However, if a ﬂow entry such as what is mentioned
+above is written, it will be applied to all packets transferred
+through this switch with the source TCP port number 22. Since
+all the packets are dropped, all SSH connections are closed,
+even in the other tenant networks. In this case, the packet was
+dropped unintentionally, however, it is possible to rewrite the
+packet header as a speciﬁed action and transfer it in OpenFlow.
+It is also possible to act in dubious or illegal ways, such
+as eavesdropping by transferring trafﬁc of other tenants that
+are not permitted to use a server on their tenant network. In
+particular, it is possible to transfer the trafﬁc of other tenants
+to a server on one’s own tenant network for the purpose of
+snifﬁng packets.
+If a FlowVisor administrator allows each tenant user to
+freely design their tenant network and ﬂow space deﬁnition, a
+ﬂow space that has overlaps will cause unintended behaviors
+because the ﬂow entries conﬂict. This is due to OpenFlow’s
+ability to ﬂexibly set values such as wildcards about the L1-L4
+headers in the match ﬁeld. In the example mentioned above,
+since the tenant user can write a ﬂow entry with wildcards
+other than the source TCP port number to the switch, s/he can
+control the trafﬁc in unassigned ﬂow spaces.
+
+155
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+IV.
+VIRTUALIZATION BASED ON FLOW ENTRY
+VERIFICATION
+We propose a new scheme to manage the virtualization
+of an OpenFlow network that allows each tenant to freely
+design his/her own network. It coordinates the controllers of
+the tenants’ networks to make their designs work properly on
+a physical OpenFlow network (Figure 2(b)). The core tasks
+of the coordination are veriﬁcation and conﬂict resolution.
+The management system veriﬁes duplications of ﬂow spaces
+assigned to each tenant, then resolves the conﬂict by rewriting
+the ﬂow entries received from the tenant controllers. Figure
+3 shows the veriﬁcation process in OpenFlow Hypervisor.
+First, this system veriﬁes and manages the overlapping address
+spaces in the owned ﬂow space. A tenant administrator deﬁnes
+the combination of address spaces that is used in each tenant
+network as a “ﬂow space“. In addition, when a ﬂow entry in a
+ﬂow space includes address spaces overlapping those of other
+ﬂow spaces, it checks for conﬂicts in the ﬂow entries and
+rewrites the match ﬁeld to guarantee separation of trafﬁc of
+each tenant network. This minimizes the amount of rewriting
+of ﬂow entries by applying veriﬁcation and management to the
+ﬂow space in advance.
+The ﬂow space of our system has a different deﬁnition
+from that of FlowVisor. Our deﬁnition of a ﬂow space is
+a set of speciﬁc elements of OpenFlow match ﬁelds. In the
+existing work, there is no mechanism to check for violations
+of the ﬂow space deﬁnition; thus, each tenant network is able
+to set arbitrary values for all match ﬁeld elements. In this
+case, a tenant user controller may cause unintended trafﬁc
+controls, such as using wildcards. On the other hand, our
+method restricts tenants to using only the range of match ﬁelds’
+values that each tenant deﬁned as a ﬂow space previously. If
+the tenant controller tries to set erroneous match ﬁelds in the
+ﬂow entry, our system veriﬁes and rewrites them to ﬁt to the
+ﬂow space deﬁnition. Our system also resolves the conﬂict
+ranges of the match ﬁelds by rewriting and writing back the
+values of the match ﬁelds.
+A. Flow Space Deﬁnition
+This ﬂow space is different from the deﬁnition of FlowVi-
+sor in Section III-A. In previous work, a ﬂow space was deﬁned
+for each switch that the tenant can control; however, here, a
+new ﬂow space is deﬁned as a combination of address spaces
+that the tenant can use for one tenant network. A ﬂow space is
+composed of multiple rules, where each rule consists of rule
+IDs, ﬂow space names, and a matching ﬁeld that is available
+to the tenant, as shown in Table II. In the matching ﬁeld, it
+is possible to set ﬁve kinds of header information of L2 to
+L4, i.e., VLAN ID, Src/Dst IP address, and Src/Dst TCP port,
+which are necessary for network operations. These deﬁnitions
+are described in JSON format, as shown in Figure 4. Each ﬂow
+space has a ﬂow space name and a set of ﬂow deﬁnitions. A
+ﬂow deﬁnition is described for each element of a match ﬁeld,
+and it is deﬁned as a conjunction of ﬁelds. Since one ﬂow
+space is represented by one or more ﬂow deﬁnitions, multiple
+ﬂow deﬁnitions are deﬁned as disjunctions to allow ﬂow entries
+that match any one. Each tenant uses only the combination of
+address spaces speciﬁed in this ﬂow space. Deﬁnition example
+2 in Table II, which summarizes the examples of Figure 4,
+shows the following address space:
+•
+VLAN ID = 100, Src IP = 192.168.64.0/20,
+Dst IP = 192.168.64.0/20, Src TCP = 80
+•
+VLAN ID = 101, Src IP = 192.168.64.0/20,
+Dst IP = 192.168.64.0/20, Src TCP = 80
+The tenant assigned this ﬂow space can control the network
+by using these two different combinations as a match ﬁeld of
+the ﬂow entry. The top row of Table II shows the available
+address space as the match ﬁeld, but the upper limit of the
+VLAN ID is half the original limit of 4096. This is due to
+securing independent address space as management space for
+managing duplications of ﬂow spaces and resolving conﬂicts
+in advance. VLAN-IDs are allocated from this management
+space to the ﬂow space when necessary.
+B. Duplicate Flow Space Veriﬁcation and Flow Entry
+Now let us explain the overlap veriﬁcation between ﬂow
+spaces and conﬂicts of ﬂow entries on the basis of the
+deﬁnition in the previous section. Table III lists examples of
+ﬂow spaces deﬁned for three tenants A, B, and C. Since the
+ﬂow space deﬁnition of tenant A on the top row completely
+includes the ﬂow spaces of tenants B and C, the ﬂow space
+of A overlaps those of B and C and is not independent. On
+the other hand, in the ﬂow spaces of tenants B and C are
+independent in Table II, and independent values are speciﬁed
+for any of the match ﬁelds, such as Src IP address. Since
+only a combination of the address spaces is used as a match
+ﬁeld in our ﬂow space deﬁnition, we can detect duplications
+by verifying the inclusion relation for each combination of
+address spaces.
+If the ﬂow spaces have a complete inclusion relation, one
+must detect and avoid conﬂicts of ﬂow entries after managing
+any ﬂow space duplication. In ﬂow spaces such as in Table III,
+the ﬂow entry at the top of the Table IV written from tenant A’s
+controller will collide with the ﬂow entries of other tenants.
+Table IV shows two examples, i.e., one that conﬂicts with other
+ﬂow space deﬁnitions and another that does not conﬂict with
+any other. In the example ﬂow entry on the upper row, the value
+of Src IP is 192.168.64.0/20, and it is based on the ﬂow space
+of tenant A. Since it includes the range of the ﬂow spaces of the
+other tenants B and C, it conﬂicts with their ﬂow entries, and
+their trafﬁc is also controlled by this conﬂicting ﬂow entry.
+On the other hand, in the example ﬂow entry on the lower
+row, VLAN-ID = 101, which is an independent value from
+the ﬂow space of the other tenants, is set in the match ﬁeld.
+This ﬂow entry does not cause a conﬂict. As mentioned above,
+we must verify the inclusion relation of the value speciﬁed in
+the match ﬁeld for each ﬂow space. If the value includes other
+tenant’s ﬂow spaces, it is possible to verify and avoid conﬂict
+by allocating a new value from the free independent address
+space and setting it in the conﬂicting ﬂow entry.
+V.
+CONFLICT VERIFICATION OF FLOW ENTRY
+To avoid conﬂicts between ﬂow entries, we propose a
+two-step conﬂict resolution method. The ﬁrst step involves
+checking the consistency between the address space deﬁned in
+the match ﬁeld of the ﬂow entry and its own ﬂow space. In the
+second step, the OpenFlow hypervisor rewrites the match ﬁeld
+of the conﬂicting ﬂow entries that overlap with the address
+spaces in another tenant’s ﬂow space. Only switches under
+the common topology of the tenants’ network are targets of
+this operation. Part of the match ﬁeld of the ﬂow entry is
+
+156
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+Figure 3. Proposed Architecture
+TABLE II. FLOW SPACE LIMIT AND DEFINITION EXAMPLES
+Rule ID
+Space Name
+VLAN
+Src IP
+Dst IP
+Src TCP
+Dst TCP
+1
+Maximum usage
+0∼2047
+0.0.0.0∼255.255.255.255
+0.0.0.0∼255.255.255.255
+0∼65535
+0∼65535
+2
+Example 1
+0∼50
+192.168.0.0/22
+192.168.4.0/22
+1024∼65535
+0∼1023
+3
+Example 2
+0∼50
+192.168.4.0/22
+192.168.0.0/22
+0∼1023
+1024∼65535
+4
+Example 3
+100, 101
+192.168.64.0/20
+192.168.64.0/20
+80
+*
+TABLE III. EXAMPLES OF DUPLICATE FLOW SPACES
+Rule ID
+Space Name
+VLAN
+Src IP
+Dst IP
+Src TCP
+Dst TCP
+1
+Tenant A
+100, 101
+192.168.64.0/20
+192.168.64.0/20
+80, 22
+*
+2
+Tenant B
+100
+192.168.64.0/24
+192.168.64.0/24
+80
+*
+3
+Tenant C
+100
+192.168.65.0/24
+192.168.65.0/24
+80
+*
+TABLE IV. EXAMPLES OF FLOW ENTRIES IN TABLE III
+Entry
+Match Field
+Action
+Conﬂicting
+VLAN ID = 100
+Flow Entry
+Src IP = 192.168.64.0/24
+Output: port 2
+Dst IP = 192.168.64.0/24
+Src TCP = 80
+Non-Conﬂicting
+VLAN ID = 101
+Flow Entry
+Src IP = 192.168.64.0/24
+Output: port 2
+Dst IP = 192.168.64.0/24
+Src TCP = 80
+converted into an independent value by using an address space
+not used by other tenants. At this time, the rewriting method
+will vary depending on the type of overlap in the topology. As
+a result, conﬂicts due to ﬂow entries are automatically detected
+and avoided, while at the same time, different ﬂow entries are
+prohibited in the deﬁned ﬂow space. These measures guarantee
+that the trafﬁc of different tenant networks stays separated.
+A. Consistency Check with Flow Spaces
+When the OpenFlow hypervisor receives a Flow-Mod
+message from a tenant controller, it check whether the match
+ﬁeld included in the message deviates from the tenant’s ﬂow
+space deﬁnition. To do so, it simply checks the range of the
+address space for values other than wildcards in the match
+ﬁeld to see if they go beyond the range deﬁned in the ﬂow
+space. If a ﬂow entry with a value beyond that of the ﬂow
+
+157
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+Figure 4. JSON Format for Flow Space
+space deﬁnition is written, the OpenFlow hypervisor discards
+the Flow-Mod message and sends an error for the message to
+the tenant controller.
+Subsequently, for ﬂow entries that have passed the con-
+sistency check, the possibility of conﬂicting ﬂow entries is
+checked by using the ﬂow space management information.
+If the ﬂow entry has no conﬂicts, the Flow-Mod message is
+simply transferred to the OpenFlow switch. By contrast, when
+ﬂow entries conﬂict, our OpenFlow hypervisor rewrites the
+ﬂow entry according to the rules discussed in the next section
+and forwards the rewritten Flow-Mod message.
+B. Rewriting Flow Entries
+If two tenants have common areas in their network topolo-
+gies and address spaces in the ﬂow deﬁnitions of their ﬂow
+spaces, the ﬂow entries may conﬂict on the switches in the
+common topology. In this case, it is necessary to rewrite
+a tenant’s ﬂow entry and to inject a ﬂow entry to convert
+the packet header into one that resolves the conﬂict. When
+rewriting the ﬂow entries so as not to conﬂict with other
+tenants’ ﬂow spaces, the hypervisor needs to determine an
+address space without the conﬂict. Two rewriting methods can
+be used; the choice is based on the size of the common area
+of the topology with other tenants. Below, we explain these
+methods using the ﬂow spaces of Tables III and the topology
+of Figure 5 as an example.
+1) Partial Case: If the common area covers only part of
+the topology, we resolve the conﬂict by using NAT (Network
+Address Translation) with unused IPv4 address blocks. First,
+NAT ﬂow entries with unused IPv4 address blocks are set at the
+edge switch of the common part of the tenant network. These
+NAT entries convert the collision addresses of all packets in
+the tenant network temporarily into different address blocks at
+the edge of the common area. All of the original ﬂow entries
+from the tenant controller need to be modiﬁed to ﬁt the NAT
+address blocks before they are transferred to the switches.
+In Figure 5, SW2 is located in the common area of the
+topologies of tenant A and tenant B. When the controller of
+tenant B tries to write a ﬂow entry that conﬂicts with tenant
+A to SW2, the OpenFlow hypervisor sets the NAT ﬂow entry
+to SW3 and SW6 in advance. An example of a NAT ﬂow
+entry installed in the switches is shown in Table V(a). In this
+example, the IPv4 address block of tenant B collides with the
+one of tenant A and is converted into an unused IPv4 address
+block. In this example, for the packet header of tenant B,
+the IPv4 address described in the ﬂow space of Table III is
+rewritten to an unused address 10.168.64.0/24. In SW3 and
+SW6, this ﬂow entry and a ﬂow entry to convert back to
+the original packet header are set to each. The match ﬁelds
+of all subsequent OpenFlow messages for the switches in the
+tenant network are rewritten in order to use the VLAN-ID to
+determine the tenant’s trafﬁc.
+2) Overall Case: If the topology of a tenant network
+is fully included in one of another network, the OpenFlow
+hypervisor rewrites the ﬂow entry which uses the VLAN-ID
+reserved for the management address space, as explained in
+Section IV-A. First, the ﬂow entry for assigning or converting
+the VLAN-ID is installed in the switches in the common area.
+This ﬂow entry assures that a different VLAN-ID is assigned
+to each tenant on the basis of the ingress physical port number.
+Subsequently, we rewrite the VLAN-ID of the match ﬁeld for
+the ﬂow entry that the tenant writes and forward it to the
+switch.
+In Figure 5, the topology of tenant C is entirely included
+in the one of tenant A. In this case, a ﬂow entry for rewriting
+the VLAN-ID is installed in SW1 and SW4, that are in the
+included tenant network, where the ﬂow entries may conﬂict.
+If the ﬂow space of tenant C, which is the included tenant
+network, uses VLAN, the ﬂow entry that converts the value
+of the VLAN-ID is installed. If it does not use VLAN, a ﬂow
+entry which pushes a VLAN-ID is installed. The ﬁrst row of
+Table V(b) shows the former case, and the second row shows
+the latter. The OpenFlow hypervisor converts all OpenFlow
+messages received from the controller of tenant C into ones
+that use the VLAN-ID assigned for tenant C before transferring
+them to SW1 and SW4.
+VI.
+IMPLEMENTATION
+We implemented an OpenFlow hypervisor prototype. The
+core modules of the system were the ﬂow space manager and
+ﬂow translation engine. We measured and evaluated simple
+benchmarks individually for each of these prototypes. In this
+section, we describe the implementation of each module of the
+
+158
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+Figure 5. Rewriting Flow Entry
+TABLE V. EXAMPLES OF FLOW ENTRIES FOR REWRITING
+(a) NAT Flow Entry
+Entry
+Match Field
+Action
+VLAN-ID = 100
+NAT Flow Entry
+Src IPv4 = 192.168.64.0/24
+Set Field: Src IPv4 = 10.168.64.0/24,
+Dst IPv4 = 192.168.64.0/24
+Dst IPv4 = 10.168.64.0/24
+Src TCP = 80
+(b) VLAN Flow Entry
+Entry
+Match Field
+Action
+New VLAN Flow Entry
+In Port = 2
+Push VLAN: 2049
+In Port = 2
+VLAN ID = 100
+Change VLAN Flow Entry
+Src IP = 192.168.65.0/24
+Set Field: VLAN-ID: 2049
+Dst IP = 192.168.65.0/24
+Src TCP = 80
+prototype system and the preliminary performance evaluation
+for each.
+A. Flow Space Manager
+The ﬂow space manager holds deﬁnitions of the given
+ﬂow space and investigates in advance where ﬂow entries can
+collide in it. Here, the ﬂow space is deﬁned as shown in Figure
+4; the manager analyzes it and holds ﬂow deﬁnitions for each
+ﬂow space. At this time, in each ﬂow deﬁnition, an address
+space that has overlapping address blocks with one of the other
+ﬂow spaces in all match ﬁelds may cause a conﬂict.
+The ﬂow deﬁnition is managed using the hash of the source
+IP address space with the network address of a 24-bit preﬁx
+as the key. In this case, if the source IP address space of the
+ﬂow deﬁnition is smaller than /24, the network address of the
+/24 network including it is used as the key. If it is larger than
+/24, the network addresses of all /24 networks are registered
+as multiple entries.
+The manager prototype was implemented in Ruby 2.3, and
+the overhead of ﬂow registration was measured. In particular,
+we measured the overhead of ﬂow registration of 5000 ﬂow
+spaces to the manager. Figure 6 shows the results of the
+evaluation measured for an Intel Core-i7 3.6GHz with 16GB
+memory. The graph with the plus signs (+) shows the case of
+5000 ﬂow spaces without any conﬂicts, while the one with the
+cross signs (x) shows that of 5000 ﬂow spaces containing one
+conﬂict for each. Considering that the ﬂow space registration
+is relatively infrequent, this result indicates an acceptable level
+of performance.
+B. Flow Translation Engine
+The ﬂow translation engine receives ﬂow entries that tenant
+controllers try to write to the OpenFlow switch and rewrites
+them to avoid conﬂicts by using the algorithm described in
+Section V-B. In OpenFlow, the controller sends a Flow-Mod
+message to an OpenFlow switch for changing the ﬂow entry
+on each switch. The ﬂow translation engine parses this Flow-
+Mod message and transfers it after rewriting the packet data
+such as the match ﬁeld of the ﬂow entry.
+The ﬂow translation engine was implemented in Python 3.6
+
+159
+International Journal on Advances in Networks and Services, vol 10 no 3 & 4, year 2017, http://www.iariajournals.org/networks_and_services/
+2017, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+ 0
+ 0.1
+ 0.2
+ 0.3
+ 0.4
+ 0.5
+ 0.6
+ 0.7
+ 0.8
+ 0
+ 1000
+ 2000
+ 3000
+ 4000
+ 5000
+Time (s)
+number of flow spaces
+Flowspace registered overhead
+w/o conflict
+w conflict
+Figure 6. Execution Time of Flow Registration
+ 0
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+ 0
+ 5000
+ 10000
+ 15000
+ 20000
+ 25000
+ 30000
+Time (s)
+Flow-Mod messages
+Flow entry translation overhead
+VLAN-ID
+Src/Dst IPv4
+Figure 7. Overhead of Flow Translation
+and Ryu SDN Framework 4.16, and the overhead of rewriting
+the match ﬁeld of the ﬂow entries was measured. In particular,
+we measured the execution time of translation for two rewriting
+patterns with 30000 Flow-Mod messages. The ﬁrst pattern
+worked to evaluate the overhead for rewriting the original
+VLAN-ID to a different value, while the second pattern worked
+to evaluate rewriting the source and destination IPv4 addresses.
+The results, as measured by a computer with an Intel Core-i7
+3.6GHz and 16 GB memory are shown in Figure 7. This engine
+could rewrite 30000 Flow-Mod messages in about 13 seconds
+for both patterns. This means that the average ﬂow translation
+overhead was 0.22 ms per Flow-Mod message. This overhead
+is required only when a new ﬂow space is added. Therefore,
+these results show that this engine has sufﬁcient performance.
+VII.
+DISCUSSION
+We proposed an OpenFlow network virtualization scheme
+that allows each tenant to freely use OpenFlow technology
+in a multi-tenant network environment. The core module of
+our scheme is the veriﬁcation-based virtualization management
+of OpenFlow networks. The proposed OpenFlow hypervisor
+manages the ﬂow spaces deﬁned by each tenant beforehand,
+detects overlaps of the ﬂow space deﬁnitions, resolves conﬂicts
+by rewriting the match ﬁelds’ values, and monitors for erro-
+neous control messages violating the ﬂow space deﬁnitions.
+The designers of tenant networks can use it to freely design
+their own networks by deﬁning network address ranges such
+as the IP address.
+FlowVisor expects that the individual ﬂow spaces never
+overlap; thus, it does not verify whether conﬂicts occur be-
+tween ﬂow spaces. This means that conﬂict avoidance among
+ﬂow spaces is left to the responsibility of the tenant’s adminis-
+trators. From this point of view, it seems reasonable to view it
+as a network partitioning technique rather than a virtualization.
+Sk¨oldstr¨om [5] et al. propose a virtualization method that uses
+FlowVisor as a relay network of a wide area network. They
+focus on resource management, whereas our research mainly
+deals with mapping to lower-layer network separation technol-
+ogy such as MPLS. The virtualization method of Yamanaka et
+al. [6] works by assigning and tagging a speciﬁc MAC address
+for each virtual network at the edge of the network. This
+method restricts ﬂow deﬁnitions to those that can be described
+by each tenant.
+Our method enables each tenant to deﬁne its virtual net-
+works freely and guarantees isolation of the tenant networks
+automatically. Using our scheme, established TCP/IP networks
+can be migrated to a datacenter where ﬂexible controls can
+easily be introduced using OpenFlow technology. Even when
+the backend of the IT infrastructure of the current organization
+is moved to the cloud environment, it will be possible to
+provide both ﬂexible network control and ease of design like
+that of a conventional network.
+VIII.
+CONCLUSION
+We proposed a virtual network management system that
+maximizes the ability of OpenFlow virtualization by using
+veriﬁcation of the ﬂow space deﬁnition. The method enables
+individual tenant networks to be freely designed in a multi-
+tenant network environment and ensures isolation among them.
+This makes it possible for IaaS providers to provide a ﬂexible
+tenant network in which OpenFlow technology is freely used
+for and by each tenant user. A preliminary evaluation of a
+prototype shows that the proposed ﬂow space management has
+sufﬁcient performance.
+ACKNOWLEDGMENT
+This work was supported by the Japan Society for
+the Promotion of Science (JSPS KAKENHI Grant Number
+JP15K00138).
+REFERENCES
+[1]
+S. Higuchi and T. Hirotsu, ”A Veriﬁcation Based Flow Space Man-
+agement Scheme for Multi-Tenant Virtualized Network,” The Eleventh
+International Conference on Digital Society and eGovernments (ICDS),
+pp. 24-29, March 2017.
+[2]
+N. McKeown, ”Software-deﬁned networking,” INFOCOM keynote talk,
+vol. 17, no. 2, pp. 30-32, 2009.
+[3]
+N. McKeown et al., ”OpenFlow: enabling innovation in campus net-
+works,” ACM SIGCOMM Computer Communication Review, vol. 38,
+Issue 2, pp. 69-74, April 2008.
+[4]
+R. Sherwood et al., ”FlowVisor: A Network Virtualization Layer,” Tech.
+Rep. OPENFLOW-TR-2009-01, OpenFlow Consortium, October 2009.
+[5]
+P. Sk¨oldstr¨om and K. Yedavalli, ”Network Virtualization and Resource
+Allocation in OpenFlow-based Wide Area Networks,” IEEE Interna-
+tional Conference on Communications (ICC), pp. 6622-6626, June
+2012.
+[6]
+H. Yamanaka, S. Ishii, and E. Kawai, ”Realizing Virtual OpenFlow
+Networks by Flow Space Virtualization,” IEICE Technical Report,
+Network Systems, vol. 112, no. 85, pp. 67-72, June 2012.
+

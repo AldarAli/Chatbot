@@ -1,0 +1,853 @@
+A New Parallel Adaptive DSMC Algorithm for Unsteady Flows in Complex Geometries
+Mirvat Shamseddine, Issam Lakkis
+Department of Mechanical Engineering
+American University of Beirut, AUB
+Email: mos05@mail.aub.edu, ilakkis@gmail.com
+Abstract—We present an efﬁcient parallel multi-scale Direct
+Simulation Monte Carlo (DSMC) algorithm for the simulation
+of three-dimensional unsteady rareﬁed gas ﬂows over complex
+geometries. The ﬂow domain is represented by a hierarchical
+octree-based Cartesian grid where three-dimensional solid objects
+with triangulated surfaces are incorporated using a cut-cell
+algorithm. The hierarchical octree domain representation allows
+the method to provide straightforward and efﬁcient data manage-
+ment suitable for a particle-tracing and dynamic grid reﬁnement
+and coarsening. The algorithm implements a spatial adaptivity
+scheme that is based on the gradients of statistically averaged
+macro-properties of the ﬂow. The proposed DSMC algorithm
+employs a novel parallelization scheme suitable for simulating
+strongly unsteady, non-equilibrium ﬂows. The parallelization
+scheme, implemented using Open Multi-Processing (OpenMP) for
+multicore Central Processing Units (CPUs), signiﬁcantly reduces
+the computational cost of modeling these ﬂows. The proposed
+DSMC algorithm is assessed for two fundamental ﬂows in the
+slip and transition-continuum regimes.
+Keywords–DSMC; Octree hierarchical grid; Spatially adaptive;
+Parallel; Rareﬁed gas ﬂow; Ray tracing; Unsteady; Complex
+geometry.
+I.
+INTRODUCTION
+Rapid developments in micro and nano-technologies call
+for computational tools that efﬁciently and accurately predict
+the ﬂow dynamics at these scales. The Direct Simulation
+Monte Carlo (DSMC) method has become the most widely
+used computational tool for simulating rareﬁed gas ﬂows in
+the slip and transition regimes, characterized by the Knudsen
+number range 0.001 < Kn < 10 [1]. Applications include
+investigation of the dynamics of the squeeze-ﬁlm surrounding a
+microstructure undergoing oscillations of large amplitudes [2],
+investigation of the Knudsen thermal force on the performance
+of a low-pressure micro gas sensor [3], and prediction of
+rareﬁed ﬂow ﬁelds in various micro/nano-systems [4], among
+others.
+The geometry model in DSMC simulations refers to both
+the computational mesh and surface representation. Two pri-
+mary approaches for the geometry model in existing state-
+of-the-art DSMC solvers include the unstructured body-ﬁtted
+grids and the Cartesian-based grids. DSMC solvers can run
+with a single processor or in parallel using the Message
+Passaging Interface (MPI) library on multiple processors.
+Parallelization is carried out by decomposition of the spatial
+domain among the processors. This ﬂavor of parallelization
+suffers from two drawbacks. The ﬁrst is the challenge of load
+balancing and distributed storage of the computational domain
+within a spatial-temporal adaptive algorithm that dynamically
+adjusts the computational grid and time step in response to the
+evolving ﬂow ﬁeld structures in unsteady ﬂows. The second
+challenge is that the criteria for spatial-temporal adaptivity are
+based on macroscopic properties computed as averages over a
+statistically meaningful number of realizations (a realization is
+a DSMC simulation initiated from a unique random number
+generator seed). This latter observation suggests parallelization
+over independent realizations. In the proposed framework, each
+thread or core processes a realization of the simulation of the
+unsteady ﬂow over the entire computational domain.
+In this paper, we present a three-dimensional DSMC algo-
+rithm parallelized over realizations, rendering it suitable for
+simulating unsteady ﬂows. The ﬂow domain is represented
+by a hybrid mesh consisting of a hierarchical octree-based
+Cartesian grid, whereas the surfaces of solid objects are
+represented by a triangular mesh. To allow for accurate DSMC
+simulations of ﬂows over objects of complex boundaries,
+a cut-cell method is implemented [5]. The method, which
+calculates the volume of each ﬂow cell cut by a solid boundary,
+enables accurate modeling of molecular collisions in these
+cells. The cut-cell method also allows for decoupling of the
+ﬂow ﬁeld mesh from the solid boundaries surface mesh,
+making it suitable for simulating near-continuum ﬂows with
+large density variations. In addition, the method employs a
+dynamic spatial adaptation algorithm. The spatial adaptation
+criterion is based on the local macroscopic ﬂow properties,
+which are computed as statistical averages over a number
+of realizations. The hierarchical octree-based Cartesian grid
+representation of the domain allows for an efﬁcient data storage
+and management that is compatible with the spatial adaptation
+algorithm. Such representation signiﬁcantly improves memory
+requirement when compared to unstructured meshes and, as
+such, is more suitable for simulating large-scale DSMC prob-
+lems. It also enables a potentially more general scheme for
+varying cell volumes over a large range of the molecular length
+scales. The hybrid mesh scheme enables simple integration of a
+variety of effective geometric tools used in computer graphics,
+including fast particle-tracing algorithms. The scheme also
+enables spatial grid adaptation, molecular movement, and re-
+sorting to be performed with fewer operations. A key feature
+of the DSMC algorithm proposed in this work is that it
+is optimized for simulating unsteady ﬂows in parallel over
+multiple cores. In contrast with distributing the domain over
+the cores, the independent realizations are distributed over
+the cores. Due to the lack of communication between the
+cores when each is handling an independent realization, the
+parallelization efﬁciency is almost 100 %. In addition, this type
+of parallelization is optimal when simulating highly unsteady
+rareﬁed ﬂows over complex geometries. These ﬂows typically
+experience considerable variability in the spatial gradients
+of the macroscopic thermodynamics properties, and as such,
+1
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-665-1
+ICQNM 2018 : The Twelfth International Conference on Quantum, Nano/Bio, and Micro Technologies
+
+spatial adaptation is frequently carried out. With each core
+being assigned a DSMC realization, local ﬂow properties at
+different time steps are collected simultaneously in parallel
+and averaged over the multicores for local mesh reﬁnement.
+This paper is organized as follows: Section 2 summa-
+rizes the DSMC methodology. Section 3 presents the three-
+dimensional unsteady parallel DSMC algorithm. Validation
+of our algorithm through benchmark DSMC simulations of
+the micro-channel Poiseuille ﬂow and the slider bearing ﬂow
+problem is presented in Section 4. The conclusion is presented
+in Section 5.
+II.
+DSMC METHODOLOGY
+DSMC, pioneered by G. A. Bird in the 1960s [6], is the
+most widely used particle-based simulation method for the
+study of rareﬁed gas ﬂows. The DSMC method is described
+in detail in the monograph by Bird [6]. A brief summary of
+the method, highlighting key aspects relevant to the algorithm
+we are proposing in this work, is presented next.
+Based on the well-developed kinetic theory of gases,
+DSMC is a stochastic particle method that computationally
+solves the non-linear Boltzmann equation by emulating the
+physics of a real gas. The microscopic behaviour of the gas
+is modeled by tracking thousands or millions of randomly
+selected simulated particles, each representing a large number
+of physical molecules or atoms. The DSMC algorithm involves
+four major processes: 1) moving the particles over a time
+step and model their interactions with boundaries, 2) indexing
+and tracking the particles within the grid of collision cells,
+3) selecting particles for collision on a probabilistic basis and
+applying the appropriate collision model, and 4) sampling the
+macroscopic ﬂow properties.
+For the DSMC method to produce physically realistic and
+accurate solutions, the time step, and grid cell size must be
+chosen as follows. The collision grid cell size, ∆x, must be
+small compared to the local mean free path, λ ∼ |π/∇π|;
+the length scale characterizing the spatial variations of the
+macroscopic properties, λ. So, we choose ∆x ≪ λ, where
+λ generally varies with space and time. The simulation time
+step ∆t over which molecular motions and collisions are
+uncoupled must be smaller than the local mean collision time,
+∆t < τc = λ/VMP, where VMP is the most probable velocity.
+In order to preserve collision statistics and to yield a reasonable
+approximation of the local velocity distribution function, the
+number of simulated gas molecules per cubic mean free path,
+N, must be larger than a minimum (typically 20).
+In DSMC, simulated molecules move, collide with each
+other and with the physical boundaries. Different types of
+boundary conditions are employed in DSMC simulations.
+These include solid wall boundary conditions (thermal walls
+and periodic boundaries), and inﬂow/outﬂow boundary con-
+ditions. The interaction between a gas molecule and a solid
+boundary can be treated as being fully specular, fully diffuse,
+or a combination of the two. The inﬂow/outﬂow boundary con-
+ditions can accommodate supersonic and subsonic ﬂows. They
+are implemented by injecting particles into the computational
+domain at the external ﬂow conditions. The inﬂow/outﬂow
+boundary conditions can be implemented in DSMC using
+the standard method or the reservoir method. The standard
+method involves a particle emission surface set at the ﬂow
+boundary [6]. The well-known Maxwellian Reservoir Method
+employs ghost cells at the boundaries of the DSMC computa-
+tional domain that act as sinks and sources of the simulation
+particles [7]. The velocity of the molecules entering the ﬂow
+ﬁeld is generated according to the velocity distribution of the
+external ﬂow.
+After completing molecular movements, intermolecular
+collisions are simulated probabilistically using molecular col-
+lision models. Several collision models, designed to reproduce
+the real ﬂow macroscopic behaviour, were applied successfully
+within the framework of DSMC. These models include the
+inverse power law model, the hard sphere (HS) model, the
+variable hard sphere model (VHS), and the variable soft sphere
+(VSS) model [6]. In the VSS model, the mean free path is
+given as:
+λVSS = 4α(7 − 2ω)(5 − 2ω)
+5(α + 1)(α + 2)
+µ
+n
+
+(2πmkBT)
+− 1/2
+µ = µref
+ T
+Tref
+ω
+(1)
+where m is the molecular mass, n = ρ/m is the number
+density, µref is the viscosity at reference temperature, and α is
+the scattering parameter (α = 1 for VHS model). The viscosity
+index ω is related to the power exponent η in the inverse power
+law model as ω = 1
+2
+η+3
+η+1. In the HS model, the mean free path
+is expressed as:
+λHS =
+1
+√
+2πd2n
+(2)
+where d is the molecular diameter.
+The DSMC method is an explicit time marching simulation
+algorithm. As such, it always produces unsteady ﬂow simu-
+lations. The statistical scatter of DSMC computation varies
+according to the inverse square root of the sample size.
+Figure 1 illustrates two sampling methods used in DSMC: the
+steady and the unsteady sampling techniques. For predicting a
+steady ﬂow ﬁeld, a time average over a number of time steps
+is required to obtain smooth results. In this case, averaging
+must be carried out after the transient phase elapses and
+a steady behaviour is established. For simulating unsteady
+ﬂows, ensemble-averaging is performed where the entire ﬂow
+evolution is calculated repeatedly. The ﬂow ﬁeld is sampled
+at the appropriate ﬂow sampling time steps. To compute the
+ﬂow ﬁelds of the macroscopic thermodynamic properties, the
+samples are averaged over a sufﬁciently large number of ﬂow
+realizations, each originating from a different random number
+generator seed.
+III.
+THREE-DIMENSIONAL UNSTEADY DSMC
+ALGORITHM
+In the current study, an octree-based Cartesian grid divides
+the computational domain into cubic cells, whereas the surface
+of the 3D solid object is triangulated using the preprocessing
+open-source software SALOME 7.5.1 [9]. Tree-based methods
+with the simple Cartesian structure and embedded hierarchy
+make use of recursive encoding schemes. These schemes
+render processes such as mesh adaptation, rebuilding, data
+access, and handling of ﬂuid-solid interaction both simple and
+efﬁcient.
+Each solid object is bounded by a rectangular box. An
+axis-aligned box-box intersection test [10] is then carried out
+to identify collision cells neighbors and all cubic cells that
+2
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-665-1
+ICQNM 2018 : The Twelfth International Conference on Quantum, Nano/Bio, and Micro Technologies
+
+Time 
+Time 
+Time 
+Time 
+t=0 
+Flow time step 
+Flow sampling time step 
+Sampling interval 
+ Reset flow 
+ Reset flow 
+Initial unsteady flow 
+Steady flow field = average of these time steps 
+Unsteady 
+flow sampled 
+as ensemble 
+average of 
+sampling 
+time steps 
+across each 
+run 
+(a) 
+(b) 
+  
+Figure 1. (a) The schematic of the time-averaging of the ﬂow properties over
+a long interval of simulation time. (b) The schematic of the
+ensemble-averaging of the ﬂow properties over many runs [8].
+overlap with the bounding box surface. In addition, the fast
+3D triangle-box overlap test by Moller [11] is implemented
+to test overlapping between triangular elements of the solid
+object surface mesh and cubic cells inside the bounding
+box. This test enables linking each surface mesh triangular
+element to the overlapping Cartesian cells. Figure 2(a) shows
+a schematic diagram illustrating the hybrid mesh scheme.
+Figure 2(b) shows a zoomed-in view of the box bounding the
+solid object (sphere). It also shows the cut-cell representation,
+where triangular solid surface elements cut the cubic cells in
+the adaptively reﬁned Cartesian mesh. The resulting cut-cell
+volume is estimated using the Monte Carlo technique described
+in [5]. This volume is needed to accurately model collisions
+and predicts the macroscopic properties in the cut-cell. The
+proposed three-dimensional hybrid mesh scheme employs a
+ﬂexible data structure which enables simulation of particles
+movement and sorting processes with fewer operations, thereby
+reducing the CPU time.
+Surface triangle 
+element 
+
+
+
+
+
+x y z
+P
+x y z
+P
+x y z
+P
+,
+,
+,
+,
+,
+,
+3
+2
+1
+Determine the 
+relationship between 
+object and cells 
+(a) 
+(b)
+Figure 2. (a) Schematic representation of a triangulated surface mesh of a
+sphere embedded in a 3D octree Cartesian grid. (b) Bounding box and a
+cut-cell representation.
+In the presence of complex solid boundaries (and/or when
+the surface to volume ratio of the ﬂow domain is large),
+the computational cost of molecular movement amounts to
+a signiﬁcant fraction of the computational cost of a DSMC
+simulation. To efﬁciently track the particle movement within
+the hierarchical octree-based Cartesian grid, a special particle
+ray-tracing technique is employed. This technique is used
+in the vicinity of the solid object surface where the region
+of the bounding box is treated as follows. During a single
+time step, a molecule cannot move more than one collision
+cell size along each dimension (a DSMC time constraint).
+Ray tracing is performed only for particles that leave their
+assigned cell and intersect the box bounding the solid object.
+If an intersection with the bounding box occurs, a cell-by-
+cell particle tracking procedure is performed to determine
+whether the particle reaches a boundary surface triangle, stays
+in or leaves the current cell. If no ray-triangle intersection
+occurs, the particle’s position is updated if the particle stays
+in the current cell; otherwise, ray-box intersection tests with
+all possible neighbour collision cells are performed to track
+the particle from the current cell to its nearest neighbour
+collision cell. The particle-tracking algorithm is then invoked
+again to move the particle over the remainder of the time
+step. At the completion of the molecular movement phase,
+each particle is automatically stored within its ﬁnal cell by the
+sort subroutine. In summary, the hierarchical octree-based data
+structure allows for efﬁcient intersection testing within the ray
+tracing algorithm. We point out here that the grid cells are
+axis-aligned boxes whose edges are all parallel to the basis
+vector, which enhances the efﬁciency.
+Another special feature of the proposed algorithm is that it
+runs transient parallel Monte Carlo simulations simultaneously
+and independently on multicore CPUs. Figure 3 shows a
+schematic representation of the parallel algorithm using mul-
+tiple cores. Each simulation consists of m transient solutions
+with n realizations each. Most DSMC solvers are parallelized
+through decomposition of the physical domain into groups of
+cells that are distributed among the processors. The efﬁciency
+of such parallelization scheme may suffer due to the intensive
+communications between the processors and load imbalance
+among the processors. In addition, this parallelization scheme
+is more convenient in simulating low speed ﬂows where a
+uniform Cartesian grid is used and/or in simulating high-
+gradient ﬂows where grid resolution in both space and time
+is evoked once before steady state is reached.
+The proposed algorithm is also adaptive where reﬁnement
+of the spatial grid is employed to simulate ﬂows with length
+scales that vary considerably over the domain. Accurate predic-
+tion of these ﬂows require variable resolution of different ﬂow
+regions. Figure 4 shows the ﬂow chart for the implemented
+DSMC method using the adaptive method. Prior to the adap-
+tation process, the DSMC simulation starts with a uniform
+mesh. As depicted in the inset ﬁgure at the top right corner
+of Figure 3, periodic spatial adaptivity tests are carried out in
+the course of an unsteady simulation. The inset also shows
+the sampling times for predicting the transient macroscopic
+behaviour. Reﬁnement or coarsening of collision grids is based
+on the averaged local ﬂow variables over the multicores,
+which allows accurate prediction of these properties within
+a computationally efﬁcient framework.
+IV.
+BENCHMARK TEST CASES
+To validate the proposed three-dimensional parallel DSMC
+algorithm, numerical simulations of two fundamental ﬂows in
+the slip and transition-continuum regimes are presented. The
+Poiseuille ﬂow is taken as an example to assess the spatial
+adaptation scheme in the slip ﬂow regime. A three-dimensional
+ﬂat slider gas bearing problem is considered to evaluate the
+hybrid mesh scheme in transition ﬂow regime. The simulations
+3
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-665-1
+ICQNM 2018 : The Twelfth International Conference on Quantum, Nano/Bio, and Micro Technologies
+
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+  …… 
+11 
+12 
+13 
+1m 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+  …… 
+21 
+22 
+23 
+2m 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+𝑟1 
+𝑟2 
+: 
+𝑟𝑛 
+  …… 
+c1 
+: : 
+c2 
+c3 
+cm 
+CPU 1 
+CPU c 
+CPU 2 
+𝑂1 
+𝑂2 
+𝑂3 
+  …… 𝑂𝑚 
+ 
+ 
+Spatial Adaptivity 
+Tests 
+Transient Solution 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+…. 
+CPU Core 
+Average of 
+𝑟𝑖 over 
+CPU Cores 
+Average 
+over 
+Realizations 
+𝑟1𝑎 
+𝑟2𝑎 
+: 
+𝑟𝑛𝑎 
+𝑟1𝑎 
+𝑟2𝑎 
+: 
+𝑟𝑛𝑎 
+𝑟1𝑎 
+𝑟2𝑎 
+: 
+𝑟𝑛𝑎 
+𝑟1𝑎 
+𝑟2𝑎 
+: 
+𝑟𝑛𝑎 
+  …… 
+1 
+2 
+3 
+m 
+Figure 3. The schematic of running transient DSMC simulations on different
+CPU cores. The upper right ﬁgure displays the local adaptive and the ﬂow
+sampling time steps.
+Average runs for 
+unsteady flow 
+or  
+average samples 
+Output 
+Results 
+Stop 
+Read data 
+Initialize 
+Molecules & 
+Boundaries 
+Start 
+For unsteady 
+flow, repeat until 
+reqd. sample is 
+obtained 
+ 
+Interval > ∆𝑡𝑎 
+? 
+Move Particles  
+Apply BCs 
+Enter New Particles  
+Sort into cells 
+ 
+Interval > ∆𝑡𝑠 
+? 
+Yes 
+Time >  𝑡𝐿 ?  
+No 
+Yes 
+No 
+No 
+Yes 
+Mesh 
+Adaptation 
+Sample Flow 
+Properties 
+Compute Collisions 
+Figure 4. Simpliﬁed ﬂow chart of the implemented DSMC algorithm. ∆ta:
+adaptive time; ∆ts: sampling time; tL: Long time.
+were carried out using Fortran in CentOS Linux 7 on 16 core
+Intel Xeon(R) CPU E5-2650 v2 running at 2.6 GHz.
+A. Poiseuille Flow
+The pressure-driven Poiseuille gas ﬂow in a rectangular
+microchannel between two parallel plates is considered. The
+channel axis is along the x direction. The plates, of length L
+along the ﬂow direction (x), are separated by a distance H,
+where L/H ≫ 1. The ﬂow is two dimensional in the x − z
+plane; the channel dimension, W, along the y direction is much
+larger than H; W ≫ H. Since the ﬂow is two dimensional
+in the x − z plane, the computational domain consists of one
+grid cell in the y direction. The following boundary conditions
+were imposed: (i) solid-walls are assumed to be perfectly
+accommodating, (ii) periodic boundary conditions are enforced
+at the x − z planes on either size of the domain, and (iii) the
+Maxwellian reservoir method is used for the inﬂow/outﬂow
+boundary conditions at the inlet and outlet of the channel. The
+simulated ﬂuid is argon gas (VHS gas) initially at ambient
+conditions. The channel length is L = 5 µm, the channel
+aspect ratio is L/H = 5, the inlet ﬂow stream temperature
+is Tin = 300 K, the inlet to exit pressure ratio, Pin/Pe = 3,
+and the inlet pressure is Pin = 160.839 kPa. To assess the
+spatial adaptivity scheme in our DSMC algorithm, this ﬂow
+is simulated with and without dynamic grid adaptation. For
+the non-adaptive simulation, the grid spacing was chosen to
+be ∆x ∼ 1/5λ0, where λ0 is the mean free path at the
+initial conditions. For the adaptive simulation, the grid spacing
+is computed as ∆x ∼ λ/3, where at each adaptation time
+interval, λ for each cell is computed using Eq. (1), where T
+and n for the cell are averaged over all the cores. Figure 5
+shows the steady state centreline pressure distribution using the
+proposed DSMC algorithm with and without grid adaptation.
+Our results are in good agreement with the simulated pressure
+proﬁle by Wu et al. [12], with the pressure proﬁle predicted
+using the adaptive scheme closer to that predicted by Wu et
+al. [12]. The ﬁgure also shows the ﬂow ﬁeld reﬁned mesh
+1
+1.5
+2
+2.5
+3
+3.5
+0
+0.2
+0.4
+0.6
+0.8
+1
+Centerline Pressure Ratio 
+P/Pe 
+x/L 
+DSMC Data
+DSMC Adaptive Data
+Wu et al. [2001]
+x, z=0 
+x=L 
+z=H 
+Figure 5. Centreline pressure distribution (top ﬁgure) and ﬂow ﬁeld reﬁned
+mesh for a microchannel in the slip ﬂow regime.
+upon spatial adaptation where the size of an inlet collision
+cell is adapted to half the size of a collision cell at the exit;
+λin/λe ∼ Pin/Pe. With Pin/Pe = 3 and since the octree
+divides a cell by integer powers of 2, λin/λe was set to 1/2.
+The transient solution and spatial adaptivity sampling in-
+tervals are presented in Table I, among other parameters. The
+table also shows that at the end of the simulation, the number
+of cells in the adaptive simulation increased from 13056 to
+48084, which is comparable to that used in the non-adaptive
+case. The computational cost of the adaptive simulation is,
+however, less by a factor of 7.7.
+B. Slider Bearing Problem
+Figure 6 shows a typical three-dimensional ﬂat slider gas
+bearing conﬁguration. A channel is formed by a moving
+horizontal bottom surface and a stationary slightly inclined
+surface whose length is L = 5 µm and height at the trailing
+edge is Ho = 50 nm. The simulation used argon hard sphere
+particles initially at ambient conditions. Thus, the Knudsen
+number at the exit is Kno = λ/Ho = 1.25. The lower
+surface moving at a speed of U = 25 m/s and the bearing
+number is Λ = 61.6 (deﬁned as Λ = 6µUL/paH2
+o; pa
+4
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-665-1
+ICQNM 2018 : The Twelfth International Conference on Quantum, Nano/Bio, and Micro Technologies
+
+TABLE I. COMPARISON OF ELAPSED TIME PER DSMC
+REALIZATION FOR NON-ADAPTIVE AND ADAPTIVE POISEUILLE
+FLOW.
+Non-Adaptive
+Adaptive
+Time step
+14.48 ps
+28.96 ps
+Sampling time
+55.3 ns
+55.3 ns
+Transient solution sampling interval
+27.45 ns
+27.45 ns
+Spatial adaptivity sampling interval
+18.299 ns
+Total no. of time steps
+3800
+1900
+Total Time per Realization per core
+45910.5 s
+5931.76 s
+Initial no. of Cells
+52224
+13056
+Final no. of Cells
+52224
+48084
+is the ambient pressure and µ is the viscosity of the gas).
+As for the boundary condition, the solid-walls are assumed
+to be perfectly accommodating, periodic boundary conditions
+are enforced at the x − z planes on either side of the 3D
+domain, and the Maxwellian reservoir method is used for the
+inﬂow/outﬂow boundary conditions at the inlet and outlet. Our
+Slider 
+Disk 
+U 
+Cells 
+x 
+y 
+z 
+W 
+L 
+H 
+Figure 6. Schematic of the slider bearing geometry, L = 5µm, Ho = 5µm,
+U = 25m/s.
+DSMC results are in excellent agreement with the previously
+published DSMC solution by Garcia et al. [13].
+Table II shows the simulation time per time step per
+core distributed among the particles movement, sorting and
+collision time steps. It can be observed that the molecular
+motion in the slider bearing ﬂow takes the longest time. This
+is due to the cost of the ray-tracing operations using the hybrid
+mesh constructed near the inclined surface.
+TABLE II. ELAPSED TIME(S) OF DSMC PROCESSES AT FLOW
+SAMPLING TIME STEP FOR BENCHMARK SIMULATIONS.
+Non-Adaptive
+Poiseuille
+Adaptive
+Poiseuille
+Slider Bearing
+Move Molecules
+3.269
+0.917
+4.240
+Sort Molecules
+2.165
+0.729
+0.084
+Perform Collisions
+0.354
+0.215
+0.019
+V.
+CONCLUSION
+We presented a parallel three-dimensional DSMC algo-
+rithm to model rareﬁed gas ﬂows in domains with complex
+solid boundaries. The algorithm employs a hierarchical octree-
+based Cartesian grid, accompanied by a cut-cell algorithm to
+incorporate complex 3D geometries with triangulated surfaces
+0.5
+0.7
+0.9
+1.1
+1.3
+1.5
+0
+0.2
+0.4
+0.6
+0.8
+1
+P 
+x 
+DSMC Results
+Garcia et al. [1994]
+Figure 7. Slider bearing normalized pressure proﬁle for Kno = 1.25,
+Λ = 61.6, Ma = 0.08.
+within the grid cells. It also incorporates a multi-level spatial
+adaptivity scheme based on the macroscopic average of local
+ﬂow properties. An original method of running parallel un-
+steady DSMC simulations simultaneously and independently
+on multicores is proposed. The selected geometry model is
+characterized by its low memory storage requirements com-
+pared to the use of non-Cartesian meshes, its ability to employ
+an efﬁcient ray-tracing particle movement scheme, and its
+ﬂexibility to enable a fully dynamic three-dimensional spatial
+adaptive scheme that maintains DSMC constraints consistent
+with the local variations of ﬂow ﬁeld properties. Correlation
+of computational results and experimental data clearly show
+the capability of the unsteady DSMC algorithm to provide
+accurate ﬂow ﬁeld predictions. In future work, we expect
+to complement the spatial adaptivity with a novel temporal
+adaptivity scheme and then showcase the efﬁciency and accu-
+racy of the method in predicting unsteady ﬂows in complex
+geometries encountered in micro- and nano-electromechanical
+systems (MEMS/NEMS).
+REFERENCES
+[1]
+M. Gad-el Hak, “The ﬂuid mechanics of microdevices–the Freeman
+scholar lecture,” Journal of Fluids Engineering, vol. 121, no. 1, 1999,
+pp. 5–33.
+[2]
+N. A. Diab and I. A. Lakkis, “Investigation of the squeeze ﬁlm dynamics
+underneath a microstructure with large oscillation amplitudes and inertia
+effects,” Journal of Tribology, vol. 138, no. 3, 2016, p. 031704.
+[3]
+M. B. Gerdroodbary, D. Ganji, M. Taeibi-Rahni, and S. Vakilipour,
+“Effect of Knudsen thermal force on the performance of low-pressure
+micro gas sensor,” The European Physical Journal Plus, vol. 132, no. 7,
+2017, p. 315.
+[4]
+E. Roohi, “DSMC simulations of nanoscale and microscale gas ﬂow,”
+in Encyclopedia of Microﬂuidics and Nanoﬂuidics.
+Springer, 2015,
+pp. 681–693.
+[5]
+C. Zhang and T. E. Schwartzentruber, “Robust cut-cell algorithms
+for DSMC implementations employing multi-level Cartesian grids,”
+Computers & Fluids, vol. 69, 2012, pp. 122–135.
+[6]
+G. A. Bird, Molecular Gas Dynamics and the Direct Simulation of Gas
+Flows.
+Clarendon Press, 1994, no. v. 1, 94003873.
+[7]
+M. W. Tysanner and A. L. Garcia, “Non-equilibrium behaviour of
+equilibrium reservoirs in molecular simulations,” International journal
+for numerical methods in ﬂuids, vol. 48, no. 12, 2005, pp. 1337–1349.
+[8]
+H. M. Cave et al., “Implementation of unsteady sampling procedures
+for the parallel direct simulation Monte Carlo method,” Journal of
+Computational Physics, vol. 227, no. 12, 6/1 2008, pp. 6249–6271.
+5
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-665-1
+ICQNM 2018 : The Twelfth International Conference on Quantum, Nano/Bio, and Micro Technologies
+
+[9]
+“CEA/DEN, EDF R&D and OPEN CASCADE, SALOME: the open
+source integration platform for numerical simulation,” 2015, URL:
+https://www.salome-platform.org/ [accessed July 2018].
+[10]
+M. G. Coutinho, Guide to dynamic simulations of rigid bodies and
+particle systems.
+Springer Science & Business Media, 2012.
+[11]
+T. Akenine-M¨oller, “Fast 3D triangle-box overlap testing,” in ACM
+siggraph 2005 courses.
+ACM, 2005, p. 8.
+[12]
+J.-S. Wu and K.-C. Tseng, “Analysis of micro-scale gas ﬂows with
+pressure boundaries using direct simulation Monte Carlo method,”
+Computers & Fluids, vol. 30, no. 6, 2001, pp. 711–735.
+[13]
+F. J. Alexander, A. L. Garcia, and B. J. Alder, “Direct simulation Monte
+Carlo for thin-ﬁlm bearings,” Physics of Fluids, vol. 6, no. 12, 1994,
+pp. 3854–3860.
+6
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-665-1
+ICQNM 2018 : The Twelfth International Conference on Quantum, Nano/Bio, and Micro Technologies
+

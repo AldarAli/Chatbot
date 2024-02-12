@@ -1,0 +1,804 @@
+Optimized Hardware Configuration for High
+Performance Computing Systems
+Scott Hutchison
+Department of Computer Science
+Kansas State University
+Manhattan, KS 66505, USA
+email: scotthutch@ksu.edu
+Daniel Andresen
+Department of Computer Science
+Kansas State University
+Manhattan, KS 66505, USA
+email: dan@ksu.edu
+William Hsu
+Department of Computer Science
+Kansas State University
+Manhattan, KS 66505, USA
+email: bhsu@ksu.edu
+Mitchell Neilsen
+Department of Computer Science
+Kansas State University
+Manhattan, KS 66505, USA
+email: neilsen@ksu.edu
+Benjamin Parsons
+High Performance Computing Modernization Program
+Engineering Research and Development Center
+Vicksburg, MS 39180, USA
+email: ben.s.parsons@erdc.dren.mil
+Abstract—When faced with upgrading or replacing High Per-
+formance Computing or High Throughput Computing systems,
+system administrators can be overwhelmed by hardware options.
+Servers come with various configurations of memory, processors,
+and hardware accelerators, like graphics cards. Differing server
+capabilities greatly affect their performance and their resulting
+cost. For a fixed budget, it is often difficult to determine
+what server package composition will maximize the performance
+of these systems once they are purchased and installed. This
+research uses simulation to evaluate the performance of different
+server packages on a set of jobs, and then trains a machine
+learning model to predict the performance of un-simulated server
+package compositions. In addition to being orders of magnitude
+faster than conducting simulations, this model is used to power
+a recommender system that provides a precision@50 of 92%.
+Index
+Terms—HPC;
+Procurement
+Optimization;
+Recom-
+mender system; XGBoost.
+I. INTRODUCTION
+When faced with upgrading or expanding a High Per-
+formance Computing (HPC) or High Throughput Comput-
+ing (HTC) system, administrators of these systems can be
+overwhelmed by options. It is a challenging task to get
+the best performance for a fixed budget. Server capabilities
+(i.e., number and types of processors, amount of memory,
+and number and types of Graphics Processing Units (GPU)
+or other hardware accelerators) greatly affect their costs,
+and for a fixed spending ceiling, it is desirable to get the
+“best bang for your buck.” For an HPC system, an optimal
+server package composition is dictated by its typical use.
+For instance, if many users rely upon a GPU-accelerated
+application or library, a higher GPU count may be desirable,
+even if this means fewer servers can be purchased. With many
+factors to consider, HPC administrators often rely upon their
+preferences, intuition, and experience to inform procurement
+decisions. This research uses historical job data from an HPC
+system, a discrete event simulator, and a machine learning
+model to power a recommender system, which can help inform
+a hardware procurement decision. These techniques provide
+additional information to HPC system administrators about
+which set of budget-constrained hardware minimizes wait
+time for users’ jobs, and provides quantifiable support for
+procurement decisions when upgrading or expanding existing
+HPC infrastructure. The contributions of this work can be
+summarized as follows:
+1) A data set consisting of roughly 12,700 HPC scheduling
+simulations, each with a different HPC server set
+2) An optimized XGBoost regression model for predicting
+average wait time when given a composition of servers
+3) A recommender system with precision@50=92%, which
+can inform hardware procurement decisions
+This paper is laid out as follows: Section II provides
+additional background on the problem and describes similar
+work done by others, Section III provides the methodology
+and some implementation details, Section IV provides details
+of formulas for metric calculations, Section V provides the
+results of the experiments, and Sections VI provides our final
+conclusions.
+II. BACKGROUND AND RELATED WORKS
+The Open Science Grid (OSG) [1] [2] is a worldwide
+collaboration that offers distributed computing for scientific
+research. In the central United States, one of the organiza-
+tions contributing resources to the OSG is the Great Plains
+Augmented Regional Gateway to the Open Science Grid (GP-
+ARGO) [3]. In part, GP-ARGO receives funding through
+governmental grants. These grants are often used to procure
+new equipment to expand or improve the capabilities of GP-
+ARGO’s participating organizations. Consequentially, there
+is a fixed budget ceiling for HPC equipment procurement,
+and the administrator’s goal is to purchase new equipment
+that will maximize computational performance for our typical
+applications while ensuring costs remain under the fixed grant
+budget. The research question for this work is as follows: for a
+1
+Copyright (c) IARIA, 2023.     ISBN:  978-1-68558-107-7
+ADVCOMP 2023 : The Seventeenth International Conference on Advanced Engineering Computing and Applications in Sciences
+
+planned HPC expansion, can experimental simulation provide
+an optimal set of hardware under a given budget that will
+minimize job wait time?
+The challenge of optimal hardware procurement is not
+exclusive to our organization. Similar work was done by Evans
+et al. [4]. They collected benchmarks for various software
+applications on different hardware to optimize the ratio of
+Central Processing Unit (CPU) and GPU architectures for HPC
+jobs. Their work is similar to ours, but we took a different
+approach by using a scheduling simulator to evaluate the
+performance of a set of jobs that were actually submitted to an
+HPC system. We are solving a very similar problem as Evans
+et al., but using a different approach to arrive at an optimal
+hardware configuration.
+Other researchers have attempted to optimize for a partic-
+ular application, such as the work Kutzner et al. [5] did to
+improve the utilization of GPU nodes when using GROMACs.
+Although these techniques are not without their merits for HPC
+systems that run a large number of homogeneous applications,
+users of the GP-ARGO HPC systems run a wide variety of jobs
+and applications. A more broad scheduler-based optimization
+was more appropriate for our application.
+Various public HPC workloads exist [6], and have been used
+by HPC researchers in the past. However, as we are attempting
+to identify and evaluate new hardware for a specific HPC
+system, log data from that HPC system was utilized as the
+workload for this research.
+Different scheduling applications like SLURM, HTCondor,
+or PBS, operate on HPC systems and perform the function
+of assigning HPC resources to jobs. This job to machine
+assignment task is as an extension of the online bin packing
+problem [7]. For the bin packing problem, the goal is to pack a
+sequence of items with sizes between 0 and 1 into as few bins
+of size 1 as possible. Each job specifies the resources requested
+(the object sizes), and each HPC machine has a certain amount
+of available resources (the bins with their respective sizes). The
+scheduler is given the task to meet job requirements by assign-
+ing them to HPC nodes (pack the objects into the available
+bins) as efficiently as possible. This is an online problem as
+new jobs are submitted over time to the scheduler. The best
+fit bin packing (BFBP) algorithm has been shown by Dosa
+and Sgall [8] to use at most ⌊1.7OPT⌋ bins, ensuring this
+algorithm will provide a reasonably close to optimal average
+wait time when it is used as an HPC job scheduling algorithm.
+Since scheduling algorithms vary between applications, most
+being highly customizable, and others being proprietary, a
+discrete event simulator utilizing the BFBP algorithm served
+as a stand-in for our scheduling application in an attempt to
+make it more universally applicable. The BFBP scheduling
+algorithm is described in Figure 1.
+Although various HPC simulators have been used for similar
+research, such as SimGrid [9], GridSim [10], or Alea [11], this
+experiment needed a simple discrete event simulator using the
+BFBP scheduler. The simulators mentioned above were either
+deemed overly complex for our purposes, or they failed to
+allow for the three limiting resources (memory, CPUs, and
+Algorithm 1 Best Fit Bin Packing Scheduling
+1: while The simulation is incomplete do
+2:
+if Some job in the queue can be executed on some
+machine then
+3:
+Find the (job, machine) pairing which results in
+the fewest remaining resources for some machine. Begin
+executing that job on that machine.
+4:
+else
+5:
+Advance simulation time until a new job is sub-
+mitted or a running job ends, whichever is sooner.
+6:
+Queue submitted jobs and stop ending jobs.
+7:
+end if
+8: end while
+Fig. 1. Pseudocode for the best fit bin packing algorithm
+GPUs) we were interested in investigating. An HPC scheduler
+simulator was also considered, such as the SLURM simulator
+developed at SUNY University in Buffalo [12]. Although this
+option was investigated further, scaling a job’s actual duration
+from the log data to the new machine once it is assigned
+to a machine was challenging. As such, a custom discrete
+event simulator was developed and utilized for this research.
+The simulator allows for three resource constraints in each
+machine: memory, CPUs, and GPUs. It is fairly lightweight,
+fast, and easy to understand.
+A significant consideration when evaluating new server
+hardware is the performance increase newer technology or
+architectures can provide. Using log data, we know how long
+a job took on a machine with known hardware. Since the
+specifications for the new hardware under consideration are
+also known, the actual duration of the jobs from the historic
+log data was scaled using base performance of the processor
+as reported by SPEC CPU2017 benchmark, second quarter,
+2023 [13].
+Knowing how a particular job performed on one set of
+hardware and estimating how it will perform on some other
+hypothetical set of hardware is challenging. Sharkawi et al.
+[14] successfully used a similar SPEC benchmark to estimate
+the performance projections of HPC applications. Other re-
+searchers, like Wang et al. [15] have pointed out that these
+benchmarks fail to account for all the variables affecting job
+resource utilization and should be avoided. Although CPU
+performance is not the only factor by which we could have
+scaled job duration, and perhaps it is not the best factor by
+which to scale, it worked well for our purposes. The discrete
+event simulator was implemented such that the scaling factor
+could be easily changed if other researchers should find a
+different factor more relevant to their situation.
+Various metrics are typically used when evaluating the
+performance of HPC scheduling algorithms. Some of these are
+average wait time, HPC utilization, average turnaround time,
+makespan, throughput, etc. Which metric is used depends on
+2
+Copyright (c) IARIA, 2023.     ISBN:  978-1-68558-107-7
+ADVCOMP 2023 : The Seventeenth International Conference on Advanced Engineering Computing and Applications in Sciences
+
+the application and function of the HPC system, and different
+organizations may value one metric over another. The metric
+used for this research was average wait time, or the average
+number of seconds each job spent waiting in the job queue
+for execution on HPC resources. We presume that the same
+techniques could be applied by other researchers using a
+different metric, should they prefer a different one.
+Recommender systems power a variety of applications like
+search engines and music recommendation systems. First, the
+hits for the system must be defined. Hits are the elements from
+the data set that are relevant to the user’s search. Next, the user
+specifies the number of recommendations, k, that they would
+like to receive. If the recommender system is precise, a large
+portion of the k items returned will be hits.
+III. METHODOLOGY
+The general plan for optimizing a hardware package for our
+fixed budget can be summarized as follows:
+1) Receive vendor quotes with potential server options.
+2) Generate potential server combinations to purchase un-
+der the specified budget which meet our procurement
+requirements.
+3) Identify a typical set of jobs representing the workloads
+typically submitted to our HPC system.
+4) Conduct simulations using a subset of the server pack-
+ages to schedule the representative job set and compute
+metrics to determine their performances.
+5) Use machine learning to train and refine a model that
+can predict the performance of un-simulated server
+combinations.
+6) Develop a recommender system using the machine
+learning model.
+7) Subjectively evaluate the recommended server packages
+and make a more informed procurement decision.
+A. Generate Server Options
+To begin, we received several vendor quotes specifying the
+costs and capabilities of 21 potential servers to purchase. When
+considering upgrade options, we typically separate servers
+into one of three categories: compute nodes, big memory
+nodes, or GPU nodes. A compute node typically has a large
+number of processor cores, a moderate amount of memory,
+and no GPU. A big memory node will have a large amount of
+memory with a moderate amount of CPU cores and no GPU.
+A GPU node is any node which has a GPU. Table I lays out
+the options we received from several different vendors. The
+procurement budget was fixed at $1 million, and all possible
+server combinations were generated in the following way:
+• Separate servers into three categories: compute nodes, big
+memory nodes, and GPU nodes.
+• Choose all combinations of one node from each category.
+• Determine all quantities of the three node types under a
+given budget such that there is at least one GPU node
+and there is not enough funding remaining to purchase
+another node.
+TABLE I. SERVER CAPABILITIES AND COSTS UNDER INVESTIGATION
+Node type
+Distinct
+nodes
+consid-
+ered
+Memory
+range
+per
+node
+CPUs
+range
+per
+node
+GPUs
+per
+node
+Cost
+range
+per
+node
+Compute
+4
+256-512
+Gb
+24-64
+cores
+0 GPUs
+$6k-
+$10k
+Big memory
+2
+1024
+Gb
+24-64
+cores
+0 GPUs
+$11k-
+$13k
+GPU
+15
+256-
+1024
+Gb
+24-64
+cores
+1-8
+GPUs
+$14k-
+$100k
+FIG. 2. THE NUMBER OF JOBS SUBMITTED OVER TIME FOR THE SELECTED
+DAY
+In our selected job set, many jobs requested GPUs as a
+resource. These jobs would automatically fail if at least one
+GPU node were not included in a potential server package.
+Roughly 127,000 different server combinations met these
+requirements. Table II provides an illustrative example of how
+the server combinations were generated. Many server options
+and packages were omitted from the table for the sake of
+brevity.
+B. Identify a Representative Set of Jobs
+One typical day’s worth of submitted jobs (roughly 16,000
+jobs) was subjectively pulled from the log data of the local
+HPC system. As with most HPC systems, jobs were submitted
+in a bursty manner, and variety of resources were requested.
+Figure 2 and Table III display some descriptive statistics and
+information about the jobs used by this research.
+C. Job Duration Scaling
+The submitted jobs were scaled using the base performance
+of the processor on the SPEC CPU2017 benchmark suite. The
+requested duration was not modified, but the actual duration
+of each job was calculated using the following formula:
+New duration = logged duration∗logged processor performance
+new processor performance
+D. Discrete Event Simulator
+A discrete event simulator was implemented in Python that
+provides the following functionality:
+3
+Copyright (c) IARIA, 2023.     ISBN:  978-1-68558-107-7
+ADVCOMP 2023 : The Seventeenth International Conference on Advanced Engineering Computing and Applications in Sciences
+
+TABLE II. GENERATED SERVER COMBINATIONS
+ComputeNode1, $6,960 ea.
+BigMemNode1, $11,112 ea.
+GPUNode1, $14,730 ea.
+. . .
+Package Cost
+Funds Remaining
+141
+0
+1
+. . .
+$996,090
+$3,910
+139
+1
+1
+. . .
+$993,282
+$6,718
+138
+2
+1
+. . .
+$997,434
+$2,566
+...
+...
+...
+...
+...
+...
+0
+1
+67
+. . .
+$998,022
+$1,978
+TABLE III. DESCRIPTIVE STATISTICS FOR THE POOL OF SELECTED JOBS
+Requested
+Mem (in
+Gb)
+Requested
+CPUs
+Requested
+GPUs
+Requested
+Duration
+(in
+hours)
+Actual
+Duration
+(in
+hours)
+Mean
+5.12
+4.75
+0.002
+2.82
+2.27
+Std Dev.
+16.73
+3.33
+0.055
+1.02
+13.67
+Min
+1
+1
+0
+0
+0
+Max
+800
+64
+4
+11.20
+11.20
+• A global clock to keep track of simulation time.
+• Several queues, priority queues, or lists to track jobs
+as they progress through the execution process: future
+jobs, queued jobs, running jobs, completed jobs, and
+unrunnable jobs.
+• Jobs and machines are specified using comma separated
+value (csv) files, which is loaded prior to the simulation.
+• Machines have three limiting resources: available mem-
+ory, CPUs, and GPUs.
+• Jobs are specified with the following attributes: submit
+time, actual duration, and requested duration, memory,
+CPUs, and GPUs. Jobs track their start time and end
+time as the simulation progresses to allow for metric
+calculation.
+• Job end time is set when the job starts running as the job
+start time plus the job actual duration.
+• When a job starts running on a machine, that machine’s
+available resources are decremented by the resources re-
+quested by the job. Conversely, when a job completes, the
+machine executing it has its available resources increased
+by the amount requested by the ending job.
+• Jobs with a submit time greater than the current global
+clock reside in the future jobs priority queue.
+• Jobs with a submit time less than or equal to the current
+global clock, but not yet assigned to a machine, reside in
+the job queue.
+• Jobs that have begun their execution and have an ending
+time less than the current global clock, reside in the
+running jobs priority queue.
+• Jobs with an ending time less than or equal to the current
+global clock reside in the completed jobs list.
+• If no node in the cluster has adequate resources to run a
+particular job, that job is moved to the unrunnable jobs
+list.
+• In the event that no queued jobs can run on available
+resources, the simulation time “fast forwards” to the next
+event: either job submission or job ending.
+• Jobs in the job queue are run as soon as there are available
+resources and are chosen using the best fit bin packing
+scheduling algorithm described in Algorithm 1.
+• Actual job duration from logged job data can be scaled to
+allow for hardware improvement with newer hardware.
+E. Machine Learning
+Although each simulation completed fairly quickly, requir-
+ing no more than 30 minutes each, this particular combi-
+nation of server quotes yielded roughly 127,000 combina-
+tions that need to be evaluated. To reduce the computational
+requirement, every tenth line from the file with the server
+combinations was sampled, and roughly 12,700 simulations
+for these server packages were completed in parallel us-
+ing HPC resources. By sampling from the generated server
+packages uniformly, various quantities of each server under
+consideration were included in the simulated data. Each server
+package was summarized into the package total memory, total
+CPUs, and total GPUs, by summing the resources of every
+machine comprising the package. The average wait time for
+the simulation served as the label for each package. The data
+was split into 90% training and 10% test data, and an XGBoost
+[16] regression model was trained using training data. The
+regression model was evaluated using Root Mean Squared
+Error (RMSE) on the test data. An accurate regression model
+enabled the prediction of the average wait time for unsimulated
+server combinations and saved countless hours of additional
+simulation.
+F. Recommender System
+In our case, a hit was defined as a server combination
+with an average wait time in the lowest 5% of simulated
+combinations (or 632 hits out of the ∼12,700 simulated server
+combinations). The value of k was varied to evaluate the per-
+formance of the recommender system. Then, once confidence
+was gained that our recommender system was functioning
+properly, it was used to recommend systems from the entire
+server combination pool of 127,000 server combinations. The
+recommendations were summarized and evaluated subjectively
+before arriving at a final procurement decision.
+G. Simplifying Assumptions
+The current nodes comprising the HPC system were not
+added to the set of nodes simulating the selected jobs. The
+benefit current nodes would provide to the new servers under
+investigation would be common to all.
+Any additional equipment required to install and operate
+the new servers (e.g., networking hardware, additional cooling
+equipment, server racks, power infrastructure, etc.) were not
+4
+Copyright (c) IARIA, 2023.     ISBN:  978-1-68558-107-7
+ADVCOMP 2023 : The Seventeenth International Conference on Advanced Engineering Computing and Applications in Sciences
+
+deducted from the total procurement budget. It was thought
+that these costs would be a relatively fixed regardless of the
+server package chosen. The same analysis described in this
+research could be done by reducing the total budget by the
+cost of additional hardware and then completing the analysis
+with a reduced budget.
+IV. EVALUATION
+Pearson’s Correlation Coefficient [17] determined the extent
+of the correlation between the total memory, CPUs, and GPUs
+of a package and the average wait time. This coefficient
+provides a value between -1 and 1, where values closer to -1
+or 1 indicate that the feature and the label are more strongly
+correlated. A coefficient of 0 indicates no correlation.
+Wait time was calculated by analyzing the completed jobs
+output from each simulation. The wait time for each job was
+the number of seconds from the time the job was submitted
+until it began. For N jobs, the average wait time was calculated
+as follows:
+AvgWaitTime = ΣN
+i=0(Start Timei − Submit Timei)
+N
+Root Mean Squared Error was utilized for regression model
+evaluation calculated according to the following formula:
+RMSE =
+r
+ΣN
+i=0(actual wait timei − predicted wait timei)2
+N
+The performance of the final recommender system was
+evaluated using precision@k, recall@k, and F1@k. In general,
+precision@k is the proportion of recommended items in the
+top-k set that are relevant, and recall@k is the proportion of
+relevant items found in the top-k recommendations. F1@k
+is the harmonic mean of precision@k and recall@k, which
+simplifies them into a single metric. They were calculated
+according to the following formulas:
+Precision@k = (# of recommended items @k that are relevant)
+(# of recommended items @k)
+Recall@k = (# of recommended items @k that are relevant)
+(total # of relevant items)
+F1@k = (2 ∗ precision@k ∗ recall@k)
+(precision@k + recall@k)
+V. RESULTS
+The correlation of features, the performance of the regres-
+sion model and the recommender system, and some analysis
+about the recommended server compositions are described
+below.
+A. Feature Correlation
+The correlation between the features and the labels is shown
+in Table IV. For this set of jobs, the total CPUs in a server
+package were most strongly correlated to the average wait
+time. For the chosen jobs, the more CPUs a package had, the
+lower its average wait time.
+Since we are constrained by our available budget of $1
+million, choosing to buy one type of node over another is
+a zero-sum game. The more GPU nodes we purchase, and the
+more GPUs there are per node, the fewer compute nodes or
+big memory nodes we are able to afford. This is indicated by
+the positive correlation between GPUs and the average wait
+time.
+TABLE IV. PEARSON CORRELATION COEFFICIENTS
+TotalMem
+TotalCPUs
+TotalGPUs
+AvgWaitTime
+TotalMem
+1.00
+0.14
+-0.54
+-0.23
+TotalCPUs
+0.14
+1.00
+-0.42
+-0.70
+TotalGPUs
+-0.54
+-0.42
+1.00
+0.44
+AvgWaitTime
+-0.23
+-0.70
+0.44
+1.00
+B. Regression Model
+The XGBoost regression model had a RMSE = 150.13
+seconds, indicating that the total memory, CPUs, and GPU
+features made excellent predictors for the average wait time for
+these jobs when simulated with the discrete event simulator.
+The predicted vs. actual wait time is shown in Figure 3. If the
+regression model were perfect, all these points would lie upon
+the y = x line, and it is clear that this model does a good job
+at predicting the average wait time for a given composition of
+servers.
+FIG. 3. THE PREDICTED VS. ACTUAL WAIT TIMES SHOWING THE
+ACCURACY OF OUR REGRESSION MODEL.
+C. Recommender System
+The regression model was used to predict the 12,700 labeled
+simulations, and their precision@k, recall@k, and F1@k for
+various values of k are displayed in Table V. The goal was
+to reduce the number of possibilities from roughly 127,000
+different possible combinations of servers down to a reason-
+able number which could be evaluated by an HPC system
+administrator and have a large percentage of the recommended
+server combinations be hits (among the best 5% of server
+combinations with the lowest average wait times). Although
+precision@10 was 100%, it is thought that seeing more server
+package options would allow system administrators a wider
+variety from which to choose. A system administrator could
+easily and quickly review up to 50 recommendations (k = 50),
+and more than 46 out of 50 of these recommendations returned
+5
+Copyright (c) IARIA, 2023.     ISBN:  978-1-68558-107-7
+ADVCOMP 2023 : The Seventeenth International Conference on Advanced Engineering Computing and Applications in Sciences
+
+by this system (92%) would be top performing server combi-
+nations, which is excellent. Recall@k when k is less than the
+number of total hits (632 hits total) is unfairly penalized, but
+the recall@k above 632 is also excellent. When k = 1, 000,
+the recall@1000 = 91%, meaning the recommender system
+successfully retrieved 91% of the top 5% performing server
+packages when returning less than 1% of the 127,000 different
+options.
+TABLE V. PRECISION@K AND RECALL@K FOR TEST DATA
+k value
+Precision@k
+Recall@k
+F1@k
+10
+1.00
+0.02
+0.03
+50
+0.92
+0.07
+0.13
+100
+0.81
+0.13
+0.22
+500
+0.74
+0.59
+0.66
+632
+0.72
+0.72
+0.72
+1000
+0.58
+0.91
+0.71
+D. Recommended Compositions
+Beyond looking at the individual server compositions rec-
+ommended, we wanted to draw some conclusion about the
+types and quantity of nodes that the recommender system
+returned. The sum of the server quantities for the top 50
+recommendations can be found in Table VI. Compute nodes
+with the larger number of cores were vastly preferred, and the
+recommender system did not recommend spending additional
+funds on more memory for the compute nodes. Additionally,
+the recommender system preferred the cheaper big memory
+node with fewer cores. Finally, for our typical workload,
+the recommender system did not recommended purchasing a
+large number of GPUs per GPU node, instead recommending
+servers with 2 GPUs per server most often. In terms of
+our budget breakdown, the recommender system suggests
+spending on average 58% of our total budget on compute
+nodes, 8% on big memory nodes, and 34% on GPU nodes.
+TABLE VI. RECOMMENDATIONS DRAWN FROM MODEL PREDICTED
+RESULTS
+Node Type
+Node Description
+Sum of Servers Across
+Top 50
+Compute Nodes
+Cheapest w/ 256Gb
+232
+Cheapest w/ 512Gb
+0
+Expensive w/ 256Gb
+3,467
+Expensive w/ 512Gb
+0
+Big Memory Nodes
+Cheapest w/ 1024Gb
+232
+Expensive w/ 1024Gb
+111
+GPU Nodes
+2 GPUs in one server
+732
+4 GPUs in one server
+267
+VI. CONCLUSIONS
+This recommender system is not intended to replace the
+expertise of HPC administrators when it comes to decisions
+for hardware procurement. It is our hope that this tool can
+provide a data-driven technique which will help narrow the
+search space with which administrators are confronted when
+they make procurement decisions. Returning to the research
+question: experimental simulation coupled with a regression
+model enabled a recommender system to return server com-
+positions under a given budget with low average wait times
+with a precision@50 of 92%. Additionally, the discrete event
+simulator, job data set, machine learning code, and recom-
+mender system code are released under the GPLv3 license
+should other researchers find it useful [18].
+REFERENCES
+[1] R. Pordes et al., “The open science grid,” in J. Phys. Conf. Ser., vol. 78
+of 78, p. 012057, 2007.
+[2] I. Sfiligoi et al., “The pilot way to grid resources using glideinwms,”
+in 2009 WRI World Congress on Computer Science and Information
+Engineering, vol. 2 of 2, pp. 428–432, 2009.
+[3] “The great plains augmented regional gateway to the open science grid.”
+https://gp-argo.greatplains.net/. Accessed 2023-01-18.
+[4] R. T. Evans et al., “Optimizing gpu-enhanced hpc system and cloud
+procurements for scientific workloads,” in International Conference on
+High Performance Computing, pp. 313–331, Springer, 2021.
+[5] C. Kutzner et al., “More bang for your buck: Improved use of gpu nodes
+for gromacs 2018,” Journal of computational chemistry, vol. 40, no. 27,
+pp. 2418–2431, 2019.
+[6] D. G. Feitelson, D. Tsafrir, and D. Krakov, “Experience with using
+the parallel workloads archive,” Journal of Parallel and Distributed
+Computing, vol. 74, no. 10, pp. 2967–2982, 2014.
+[7] S. Martello and P. Toth, Knapsack problems: algorithms and computer
+implementations. John Wiley & Sons, Inc., 1990.
+[8] G. D´osa and J. Sgall, “Optimal analysis of best fit bin packing,” in Au-
+tomata, Languages, and Programming: 41st International Colloquium,
+ICALP 2014, Copenhagen, Denmark, July 8-11, 2014, Proceedings, Part
+I 41, pp. 429–441, Springer, 2014.
+[9] H. Casanova, A. Giersch, A. Legrand, M. Quinson, and F. Suter,
+“Versatile, scalable, and accurate simulation of distributed applications
+and platforms,” Journal of Parallel and Distributed Computing, vol. 74,
+pp. 2899–2917, June 2014.
+[10] R. Buyya and M. Murshed, “Gridsim: A toolkit for the modeling and
+simulation of distributed resource management and scheduling for grid
+computing,” Concurrency and computation: practice and experience,
+vol. 14, no. 13-15, pp. 1175–1220, 2002.
+[11] D. Klus´aˇcek, M. Soysal, and F. Suter, “Alea–complex job scheduling
+simulator,” in Parallel Processing and Applied Mathematics: 13th Inter-
+national Conference, PPAM 2019, Bialystok, Poland, September 8–11,
+2019, Revised Selected Papers, Part II 13, pp. 217–229, Springer, 2020.
+[12] N. A. Simakov et al., “Slurm simulator: Improving slurm scheduler
+performance on large hpc systems by utilization of multiple controllers
+and node sharing,” in Proceedings of the Practice and Experience on
+Advanced Research Computing, pp. 1–8, 2018.
+[13] “Second
+quarter
+2023
+spec
+cpu2017
+results,”
+2023.
+https://www.spec.org/cpu2017/results/res2023q2,
+Accessed
+on
+June
+14, 2023.
+[14] S. Sharkawi et al., “Performance projection of hpc applications using
+spec cfp2006 benchmarks,” in 2009 IEEE International Symposium on
+Parallel & Distributed Processing, pp. 1–12, IEEE, 2009.
+[15] Y. Wang, V. Lee, G.-Y. Wei, and D. Brooks, “Predicting new workload
+or cpu performance by analyzing public datasets,” ACM Transactions on
+Architecture and Code Optimization (TACO), vol. 15, no. 4, pp. 1–21,
+2019.
+[16] T. Chen and C. Guestrin, “Xgboost: A scalable tree boosting system,”
+in Proceedings of the 22nd ACM sigkdd international conference on
+knowledge discovery and data mining, pp. 785–794, 2016.
+[17] K. Pearson, “Note on regression and inheritance in the case of two
+parents,” Proceedings of the royal society of London, vol. 58, no. 347-
+352, pp. 240–242, 1895.
+[18] S.
+Hutchison,
+“Optimal-hardware-procurement-for-a-hpc-expansion.”
+https://github.com/shutchison/Optimal-Hardware-Procurement-for-a-
+HPC-Expansion, Accessed on September 19, 2023.
+6
+Copyright (c) IARIA, 2023.     ISBN:  978-1-68558-107-7
+ADVCOMP 2023 : The Seventeenth International Conference on Advanced Engineering Computing and Applications in Sciences
+

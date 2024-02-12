@@ -1,0 +1,740 @@
+Reverse Engineering Models of Concurrent
+Communicating Systems From Event Logs
+S´ebastien Salva
+LIMOS - UMR CNRS 6158
+University Clermont Auvergne, France
+email: sebastien.salva@uca.fr
+Abstract—This paper tackles the problem of extracting design
+and implementation informations from communicating systems
+made up of components concurrently interacting with each
+other, e.g., Web service compositions or IoT (Internet of Things)
+systems. We present a passive model learning approach, which
+recovers formal models from event logs, speciﬁcally one Input
+Output Labelled Transition System (IOLTS) for every component
+of the system under learning. From an event log, our approach
+is able to automatically recover conversations (a.k.a. sessions),
+without having any knowledge about the used event correlation
+mechanisms. It uses correlation pattern deﬁnitions and a heuristic
+based on the quality of the generated conversations to get the
+most relevant conversation sets. Then, our approach extracts the
+trace sets of every component and generates IOLTSs. The latter
+can be used as documentation, for test case generation, or for
+formal veriﬁcation.
+Index Terms—Reverse engineering; Model learning; Event Log;
+Communicating systems.
+I. INTRODUCTION
+Software Reverse Engineering gathers numerous techniques
+specialised in the analysis of software system to extract design
+and implementation information. Among them, model learning
+has emerged as a highly effective technique for recovering
+the models of black-box software systems. Such models, e.g.,
+temporal rules, or ﬁnite state machines that encode functional
+behaviours, offer substantial beneﬁts as they can be employed
+for security audits [1], [2], real-time anomaly detection [3], or
+bug detection [4].
+This paper addresses passive model learning, for which it is
+assumed that event logs have been previously collected from
+a System Under Learning (SUL) and can be mined to learn
+models. Although numerous passive model learning algorithms
+and tools are available in the literature, few of them [4], [5],
+[6], [7] are directly applicable to distributed systems made
+up of communicating components. These systems indeed raise
+speciﬁc difﬁculties. Most of them come from the fact that SUL
+is made up of components that run in parallel and concurrently
+interact with each other. To recover the behaviours of the
+components, it is required to extract accurate conversations
+(a.k.a. sessions), i.e., event sequences of correlated events in-
+terchanged among different components that achieve a certain
+goal. Additionally, traditional model learning algorithms return
+”ﬂat” models, i.e., one model for a given composition encoding
+all the event details (parameters) listed in the event logs. With
+large event logs, it often results in complex and unreadable
+models.
+Contribution: the paper presents another passive model
+learning approach, which recovers Input Output Labelled
+Transition Systems (IOLTSs) from event logs. As SUL is a
+distributed and concurrent communicating system, we assume
+that correlation mechanisms, e.g., execution trace identiﬁers,
+are employed to propagate context IDs and keep track of
+the process contexts. But, we do not assume knowing how
+events are correlated in advance. The major contribution of
+this approach is its capability to automatically retrieve conver-
+sations from event logs, without having any knowledge about
+the used correlation mechanisms. Instead of using a brute-
+force search over the space of parameter assignments found
+in events, our algorithm is based upon a formalisation of the
+notion of correlation patterns and is guided towards the most
+relevant conversation sets by evaluating conversation quality.
+As there is no consensus about what a relevant conversation
+should be, the conversation quality can be adapted to meet user
+needs and viewpoints. Next, from the retrieved conversations,
+our approach extracts the trace sets of every component
+participating in the generation of the event log. And, ﬁnally,
+it generates one IOLTS for every of these components, which
+captures the behaviours encoded in event logs with inputs and
+outputs showing the messages received and sent among the
+components.
+The paper is organized as follows: Section II provides some
+deﬁnitions and notations on events, correlations and sessions.
+Our approach is presented in Section III. Section IV discusses
+related work. Section V summarises our contributions and
+draws some perspectives for future work.
+II. EVENTS, CORRELATIONS AND CONVERSATIONS
+A. Preliminary Deﬁnitions
+We denote by E the set of events of the form e(α) with e
+a label and α an assignment of parameters in P sent/received
+with events, with P the parameter set. The concatenation of
+two event sequences σ1, σ2 ∈ E∗ is denoted σ1.σ2. By ϵ we
+denote the empty sequence. For sake of readability, we also
+write σ1 ∈ σ2 when σ1 is a (ordered) subsequence of the
+sequence σ2. Events are partially ordered in event logs. This
+is expressed with these partial order relations:
+• <t⊆ E × E, which orders two actions according to their
+timestamps,
+37
+Copyright (c) IARIA, 2021.     ISBN:  978-1-61208-894-5
+ICSEA 2021 : The Sixteenth International Conference on Software Engineering Advances
+
+• <c⊆ E × E, which orders two actions if the occurrence
+of the ﬁrst action implies the occurrence of the second
+one,
+• <:=<t ∪ <c is the transitive closure of <c and <t.
+We also use the following notations on events to make our
+algorithms more readable:
+• from(e(α)) = c denotes the source of the event when
+available; to(e(α)) = c denotes the destination;
+• isReq(e(α)), isResp(e(α)) are boolean expressions ex-
+pressing the nature of the event;
+• A(σ) =
+[
+e(α)∈σ
+α is the set of parameter assignments of
+σ.
+In the paper, we use the IOLTS model to express the
+behaviours of components. This model is deﬁned in terms of
+states and transitions labelled by input or output events in E.
+Deﬁnition 1 (IOLTS) An Input Output Labelled Transition
+System (IOLTS) is a 4-tuple ⟨Q, q0, Σ, →⟩ where:
+• Q is a ﬁnite set of states; q0 is the initial state;
+• Σ ⊆ E is the ﬁnite set of events. ΣI ⊆ Σ is the countable
+set of input events, ΣO ⊆ Σ is the countable set of output
+events, with ΣO ∩ ΣI = ∅;
+• →⊆ Q × Σ × Q is a ﬁnite set of transitions. A transition
+(q, a, q′) is also denoted q
+a−→ q′.
+B. Event Correlation and Conversations
+The correlation mechanisms used from one system to an-
+other are seldom the same, but they are often compliant with
+some patterns. Most of these are introduced in [8]. Given an
+event sequence σ = e1(α1) . . . ek(αk) ∈ E∗, we formulate that
+an event e(α) correlates with σ w.r.t. one of these patterns as
+follows:
+• Key based correlation: e(α) correlates with σ if all the
+events share the same parameter assignment set: α∩α1 ∩
+· · · ∩ αk ̸= ∅;
+• Chained correlation: e(α) is correlated with σ if e(α)
+shares some references with ek(αk): α ∩ αk ̸= ∅;
+• Function based correlation: a function f : E → L ﬁrstly
+assigns to each event a label of the form ”l:=label” in L
+according to the event parameter assignments. Then, the
+event correlation is performed w.r.t. one of the previous
+patterns;
+• Time-based correlation: this pattern is somehow a spe-
+cial case of the previous one, in the sense that a label
+can be injected into an event w.r.t. a condition on time.
+A function f : E → L assigns labels to events returns a
+label of the form ”t:=l” according to timestamps.
+The above patterns can also be combined with conjunctions
+or disjunctions to formulate correlation expressions. To make
+our algorithm readable, we write e(α) correlates σ if the
+event e(α) correlates with a sequence σ by such a correlation
+pattern-based expression.
+In reference to [9], a set of parameter assignments used for
+an event correlation is called correlation set. A conversation
+corresponds to an event sequence interchanged among com-
+ponents, whose events correlate by means of correlation sets:
+Deﬁnition 2 Let σ = e1(α1) . . . ek(αk) ∈ Ek.
+• σ is a conversation iff ∀1
+<
+i
+≤
+k
+:
+ei(αi)
+correlates e1(α1) . . . ei−1(αi−1)
+• corr(σ) = {cs1, . . . , csk−1} denotes the set of correla-
+tion sets of σ, with csi ⊆ (αi ∪ αi+1)
+III. MODEL LEARNING
+Given an event log produced by a concurrent and distributed
+system SUL, our approach aims at analysing an event log
+collected from SUL and at recovering one IOLTS for every
+component of SUL, which captures its behaviours.
+We assume that the events in the event log are ordered with
+respect to the < relation. When several log ﬁles are given,
+we assume that they can be assembled with <t or <c. In
+particular, the causal order relation <c may help assemble two
+log ﬁles given by two systems whose internal clock values
+slightly differ. <c indeed helps order the actions a1(α1) in a
+ﬁrst log that imply the occurrence of other actions a2(α2) in a
+second one. The analysis of the pairs (a1(α1), a2(α2)) helps
+compute the difference of time between these two systems.
+Our approach is mainly divided into three main steps:
+Conversation extraction, Component trace extraction from
+conversations, and IOLTS Generation and Generalisation.
+Beforehand, we assume that the event log is formatted into
+a sequence S of events of the form e(α) by means of
+regular expressions. The techniques proposed in [4], [10], [11],
+[12], [13], [14] can assist users in the mining of patterns or
+expressions from log ﬁles, which can be used to quickly derive
+the appropriate regular expressions.
+A. Step 1: Conversation Extraction
+The ﬁrst step of our approach extracts conversations from a
+sequence S. Our conversation extraction algorithm is devised
+to explore the possible correlations among the successive
+events of S, thus in a depth-wise way, while being efﬁciently
+guided by the conversation consistencies. This notion of
+consistency is expressed by means of conversation invariants
+and conversation quality. Invariants and quality metrics also
+formulate a heuristic that guides our algorithm towards the
+most relevant conversation sets.
+1) Conversation Invariant and Quality: The correlation
+patterns implicitly restrict the structure of a conversation ac-
+cording to some properties that are always true, i.e., invariants,
+over correlation sets. Indeed, an event must correlate with only
+one conversation σ of a conversation set C with a unique
+correlation set; a correlation set cs of corr(σ) cannot be empty,
+cs cannot be found in another conversation σ2 of C. Besides,
+σ must have parameter assignments for building potential
+correlation sets, it must include parameter assignments that
+cannot be found in any other conversation σ2. These three
+invariants are formulated in the following proposition. Other
+invariants can also be added to meet user preferences. For
+38
+Copyright (c) IARIA, 2021.     ISBN:  978-1-61208-894-5
+ICSEA 2021 : The Sixteenth International Conference on Software Engineering Advances
+
+/login(from:="cl", to:="ShopS", id:="tocken",
+account:="l")
+ok(from:="ShopS", to:="cl", id:="tocken"
+trans:="t1")
+/order(from:="cl", to:="ShopS",
+trans:="t1",item:="a")
+/stock(from:="ShopS", to:="StockS",
+trans:="t1", item:="a")
+ok(from:="StockS", to:="ShopS", trans:="t1",
+item:="a")
+ok(from:="ShopS", to:="cl",
+trans:="t1",content:="stock")
+/supply(from:="ShopS", to:="WS", trans:="t1",
+key:="k1",item:="a")
+ok(from:="WS", to:="ShopS", trans:="t1",
+key:="k1")
+/supplyWS(from:="WS", to:="WS1", key:="k1",
+key2:="k2",item:="a")
+/supplyWS(from:="WS", to:="WS2", key:="k1",
+key2:="k3",item:="a")
+/supplyWS(from:="WS", to:="WS3", key:="k1",
+key2:="k4",item:="a")
+ok(from:=WS1,to:="WS", key:="k1", key2:="k2")
+ok(from:=WS2,to:="WS", key:="k1", key2:="k3")
+Unavailable(from:="WS3",to:="WS", key:="k1",
+key2:="k4")
+/login(from:="cl", to:="ShopS", id:="tocken2",
+account:="l2")
+ok(from:="ShopS", to:=cl, id:="tocken2",
+trans:="t2")
+/order(from:="cl", to:="ShopS",
+trans:="t2",item:="b")
+ok(from:="ShopS", to:="cl", trans:="t2"
+content:="no stock")
+Fig. 1. Formatted part of an event log
+instance, the last invariant imposes conversations to start with
+a request.
+Proposition 3 (Conversation Set Invariants) Let C
+be a
+conversation set and σ ∈ C. Inv stands for the set of
+conversation set invariants:
+• ∀cs ∈ corr(σ) : cs ̸= ∅
+• ∀cs ∈ corr(σ), ∀σ2 ∈ C \ {σ} : cs ∩ A(σ2) = ∅
+• A(σ) \ S
+σ2∈C\{σ} A(σ2) ̸= ∅
+• ∀e1(α1) . . . ek(αk) ∈ C : isReq(e1(α1))
+For readability, we denote that the conversations of a conver-
+sation set C meet conversation invariants with C satisﬁes Inv.
+Our algorithm uses quality metrics as another way to limit
+the conversation set exploration, but also to prioritize this
+exploration among several conversation set candidates. We
+formulate a comprehensive quality metric of a conversation
+set C by means of a utility function for representing user
+preferences. The following deﬁnition refers to quality metrics
+Mi(C) over conversation sets, themselves calculated by means
+of metrics mi(σ) over conversations:
+Deﬁnition 4 (Conversation Set Quality) 0
+≤
+Q(C)
+=
+Pn
+i=1 Mi(C).wi ≤ 1 with 0 ≤ Mi(C) =
+P
+σ∈C mi(σ)
+|C|
+≤ 1,
+wi ∈ R+
+0 and Pk
+i=1 wi = 1.
+The conversation quality metrics can be general or estab-
+lished with regard to a speciﬁc system context. Our approach
+actually does not limit the metric set. We provide four metric
+examples below. m1 and m2 evaluate whether a conversation σ
+follows the classical request-response exchange pattern (sender
+sends a request to receiver, ultimately returning a response).
+m1 evaluates the ratio of requests in σ associated with some
+responses with ReqwResp(σ). m2 evaluates the ratio of
+responses following a prior request with RespwReq(σ).
+0 < m1(σ) = |ReqwResp(σ)| + 1
+|Req(σ)| + 1
+≤ 1
+(1)
+0 < m2(σ) = |RespwReq(σ)| + 1
+|Resp(σ)| + 1
+≤ 1
+(2)
+The metric m3 examines whether σ is composed of cor-
+related events, in other terms, whether σ has more than one
+event:
+m3(σ) =
+
+1
+if corr(σ) ̸= ∅
+0
+otherwise
+(3)
+The metric m4 evaluates the ratio of assignments used
+to correlate the events of a conversation. The simpler the
+correlation mechanism is, the closer to 1 the metric is.
+0 ≤ m4(σ) = 1 −
+|S
+cs∈corr(σ) cs|
+|A(σ)|
+< 1
+(4)
+Algorithm 1: Conversation and Correlation Set Extrac-
+tion
+input : Event sequence S = e1(α1) . . . ek(αk), boolean ﬁrst
+output: Conversation sets C1, . . . , Cn,
+1 C := {e1(α1)};
+2 call F ind C&CS(C, 2);
+3 Procedure F ind C&CS(C, i) is
+4
+if i ≤ k then
+5
+foreach σ ∈ C : ei(αi) correlates σ do
+6
+CS := P(αi ∩ last(σ)) \ {∅} ;
+7
+foreach cs ∈ CS do
+8
+σ′ := σ.ei(αi);
+9
+corr(σ′) := corr(σ) ∪ {cs};
+10
+C2 := C ∪ {σ′} \ {σ};
+11
+if C2 satisﬁes Inv and Q(C2) ≥ T then
+12
+F ind C&CS(C2, i + 1);
+13
+C3 := C ∪ {ei(αi)};
+14
+corr(ei(αi)) := ;
+15
+if C3 satiﬁes Inv and Q(C3) ≥ T then
+16
+F ind C&CS(C3, i + 1);
+17
+else
+18
+return C;
+19
+if Q(C) ≥ T 2 then
+20
+STOP all F ind C&CS instances;
+2) Conversation Set Extraction Algorithm: The conversa-
+tion set extraction is implemented in Algorithm 1. It takes
+as input an event sequence S and returns conversation sets,
+which are ordered with regard to their respective conversation
+set quality. It builds a ﬁrst set C composed of one conversation
+equal to the ﬁrst event of S. The events of S are then
+successively covered by recursively calling a new instance of
+Find C&CS(C, i). This procedure takes an event ei(αi) and
+39
+Copyright (c) IARIA, 2021.     ISBN:  978-1-61208-894-5
+ICSEA 2021 : The Sixteenth International Conference on Software Engineering Advances
+
+Fig. 2. Conversation set and IOLTSs modelling a composition of 6 Web services
+tries to ﬁnd, in the conversation set C, a conversation σ such
+that ei(αi) correlates σ. If there exists such a conversation,
+the procedure builds for every possible correlation set (line 7)
+a new conversation set with the new conversation σ.ei(αi).
+Besides (line 13), an additional conversation set C3 is built
+to consider that the event ei(αi) might also be the beginning
+of a new conversation. For every new conversation set that
+meets conversation invariants and quality, Find C&CS is
+recursively called (lines 12, 16).
+Let us consider the event sequence of Figure 1 whose events
+include varied parameters e.g., from, to, key. Algorithm
+1 extracts the conversation set C of Figure 2 (the events
+are given without parameter assignment for readability). We
+obtain 2 conversations whose events are correlated with the
+parameters in {id, trans, key, key2}.
+Algorithm 1 may return several conversation sets ordered
+by quality if different correlations have been detected among
+successive events of S. In this case, the user has to choose the
+most appropriate conversation set with regard to its needs and
+knowledge.
+B. Step2: Component Trace Extraction
+The second step of our approach now generates as many
+trace sets as components found in the system SUL. This step,
+implemented by Algorithm 2, ﬁrstly covers the events of every
+conversation to identify the components of SUL (line 5). A the
+same time, it converts events by integrating the notions of input
+and output. In lines 6-8, every request or response is indeed
+doubled by separating the component source and destination.
+The component that executes the event is identiﬁed by a
+new assignment on the parameter idc injected to each event.
+Non-communicating events (neither requests or responses) are
+marked as outputs. Then, Algorithm 2 segments the resulting
+sequence σ′ into sub-sequences, each capturing the behaviours
+of one component only of the set Comp (lines 9, 10). The
+algorithm returns form every component c ∈ Comp a set Tc
+that gathers the traces of the component c only.
+Algorithm 2: Component Trace Extraction
+input : Conversation set C
+output: Trace sets Tc1 . . . Tcn
+1 T := {};
+2 foreach σ = e1(α1) . . . ek(αk) ∈ C) do
+3
+σ′ := ϵ;
+4
+foreach ei(αi) ∈ σ do
+5
+Comp := Comp ∪ {from(ei(αi)), to(ei(αi))};
+6
+σ′ := σ′.!ai({idc := from(ei(αi))} ∪ αi);
+7
+if isReq(ei(αi)) ∨ isResp(ei(αi))) then
+8
+σ′ := σ′.?ei({idc := to(ei(αi))} ∪ αi);
+9
+foreach c ∈ Comp do
+10
+Tc := Tc ∪ {σ′ \ {e(α) ∈ σ′ | (idc := c) /∈ α}}
+C. Step 3: IOLTS Generation
+Every trace set Tc = {σ1, . . . , σn} is now lifted to the level
+of IOLTS.
+A ﬁrst IOLTS denoted Lc is obtained by transforming
+the traces of Tc to IOLTS paths. Lc is the IOLTS Lc =
+⟨Q, q0, Σ, →⟩ derived from Tc such that:
+• q0 is the initial state.
+• Q, Σ, → are deﬁned by the following inference rule:
+σi=a1(α1)...ak(αk)
+q0
+e1(α1)
+−−−−→(q1i,cl(σi))...(qk−1i,Cl(σi))
+ak(αk)
+−−−−→q0
+By applying this trace set to IOLTS conversion on ev-
+ery component, we obtain the IOLTSs Lc1, . . . , Lcn. Those
+IOLTSs are ﬁnally generalised by merging their equivalent
+states. The state merging is performed by means of the k-Tail
+algorithm [15], which is known to be a ﬂexible state merging
+algorithm in the sense that it assembles the states sharing
+the same k-future, i.e., the same event sequences having the
+maximum length k.
+Figure 2 depicts the IOLTSs generated from the conversa-
+tion set given on top of the ﬁgure. Our approach has detected
+6 components among the events of the two conversations.
+These have been converted to 6 trace sets, which capture the
+behaviours of each component. The traces sets have ﬁnally
+40
+Copyright (c) IARIA, 2021.     ISBN:  978-1-61208-894-5
+ICSEA 2021 : The Sixteenth International Conference on Software Engineering Advances
+
+been converted to the IOLTSs depicted in the ﬁgure. In this
+example, we call k-Tail with k := 2.
+With these IOLTSs, it becomes much easier to understand
+the general functioning of the whole system. In particular,
+it is now easier to understand that three services allow to
+interact with wholesalers. Two of them seem to be behavioural
+equivalent, but the last one is faulty.
+IV. RELATED WORK ON PASSIVE MODEL LEARNING
+Event correlation has been widely studied in different kinds
+of domains, e.g., process mining, or event association mining.
+In short, many approaches try to recover conversations by
+mining frequent association rules in event logs, without using
+correlation mechanisms [16], [17], [18], [19]. Other works
+propose to recover conversations by using some correlation
+patterns [20], [21], [22]. In particular, Process spaceship [22]
+gathers a set of algorithms allowing to scan event logs and
+retrieve conversation sets. The event correlations are mined
+by using a sort of breadth search strategy over the parameter
+assignments found in events. It explores all the possible
+correlations over the domain of parameter assignments and
+prunes them with interestingness properties. All the interesting
+conversation sets are found, at the expense of time complexity.
+Compared to Process spaceship, algorithm 1 uses another
+strategy, which aims at ﬁnding correlation sets while building
+conversations. This can be considered as a depth search guided
+by heuristics based upon invariants and quality metrics. This
+strategy allows to quicker ﬁnd a ﬁrst solution. Our algorithm
+also has the capability of ordering conversation sets that meet
+quality requirements.
+Passive model learning includes techniques that passively
+recover models from a given set of samples, e.g., a set of
+execution traces. These are said passive as there is no direct
+interaction with the system under learning. Models are often
+generated by encoding sample sets with state diagrams whose
+equivalent states are merged. For instance, k-Tail has been
+later enhanced with Gk-tail to generate Extended Finite State
+Machines encoding data constraints [23]. Other approaches
+also enhance k-Tail to build more precise models [24], [25],
+[26]. kBehavior [27] is another kind of approach that generates
+models from a set of traces by taking every trace one after
+the other and by completing a ﬁnite-state automaton in such
+a way that it now accepts the trace. These previous passive
+algorithms usually yield big models, which may quickly
+become unreadable.
+Some passive approaches dedicated to communicating sys-
+tems have also been proposed. Mariani et al. proposed in
+[27] an automatic detection of failures in log ﬁles by means
+of model learning. This work extends kBehavior to support
+events combined with data. It segments an event log with two
+strategies: per component or per user. The former, which can
+be used with communicating systems, generates one model
+for each component. CSight [6] is another tool specialised in
+the model learning of communicating systems, where com-
+ponents exchange messages through synchronous channels.
+It is assumed that both the channels and components are
+known. Besides, CSight requires speciﬁc trace sets, which are
+segmented with one subset by component. CSight follows ﬁve
+stages: 1) log parsing and mining of invariants 2) generation
+of a concrete Finite State Machine (FSM) that captures the
+functioning of the whole system by recomposing the traces
+of the components; 3) generation of a more concise abstract
+FSM; 4) model reﬁnement with invariants that must hold in
+FSMs, and 5) generation of Communicating FSM.
+We have proposed in [28] a passive model learning al-
+gorithm for recovering models of component-based systems.
+The requirements considered in this approach are different
+from those of the above approaches. The main difference lies
+in the fact that the communications among components are
+assumed hidden (not available in event logs). The algorithm is
+hence speciﬁc to this assumption. Then, we have proposed the
+approach Ck-Tail in [7] to generate models of communicating
+systems from event logs. Compared to CSight, we do not
+assume that the trace sets are already prepared. The novelty
+proposed by Ck-Tail lies in its capability of detecting sessions
+in event logs. Compared to this work, we assume with Ck-Tail
+that the components follow a strict behaviour: they cannot run
+multiple instances; requests are processed by a component on
+a ﬁrst-come, ﬁrst served basis. Besides, components follow the
+request–response exchange pattern
+We showed that Ck-Tail builds more precise models than
+the other approaches by better recognising sessions, but we
+also concluded that its requirements are too restrictive to be
+widely used. The approach proposed in the paper relaxes these
+assumptions and now supports any kind of communicating
+system.
+V. CONCLUSION AND FUTURE WORK
+This paper has proposed the design of an approach spe-
+cialised into the recovery of formal models from event logs
+generated by communicating systems made up of concurrent
+components. The approach ﬁrstly explores the conversation
+set space that can be derived from an event log and is
+guided toward the most relevant conversation sets by means of
+invariants and conversation quality metrics. The latter can be
+adapted to deﬁne user preferences or system contexts. Then,
+the approach generates one trace set for every component
+along with one IOLTS expressing its behaviours. These IOLTS
+can be later used as documentation or for automatics analyses.
+There are several issues which require further investigation
+before evaluating our approach. One of them is to be able to
+propose a good balance between model size, readability and
+precision. For instance, the generated IOLTSs may be very
+large on account of similar event sequences having different
+parameter values. We hence intend to add further steps to raise
+the IOLTS abstraction level, while preserving the possibility
+to analyse of use concrete parameter values.
+ACKNOWLEDGEMENT
+Research
+supported
+by
+the
+French
+Project
+VASOC
+(Auvergne-Rhˆone-Alpes Region) https://vasoc.limos.fr/
+41
+Copyright (c) IARIA, 2021.     ISBN:  978-1-61208-894-5
+ICSEA 2021 : The Sixteenth International Conference on Software Engineering Advances
+
+REFERENCES
+[1] S.
+Majumdar,
+Y.
+Jarraya,
+M.
+Oqaily,
+A.
+Alimohammadifar,
+M. Pourzandi, L. Wang, and M. Debbabi, “Leaps: Learning-based
+proactive security auditing for clouds,” in Computer Security –
+ESORICS 2017, S. N. Foley, D. Gollmann, and E. Snekkenes, Eds.
+Cham: Springer International Publishing, 2017, pp. 265–285.
+[2] S. Salva and E. Blot, “Verifying the application of security measures
+in iot software systems with model learning,” in Proceedings of the
+15th International Conference on Software Technologies, ICSOFT 2020,
+Lieusaint, Paris, France, July 7-9, 2020, M. van Sinderen, H. Fill, and
+L. A. Maciaszek, Eds.
+ScitePress, 2020, pp. 350–360.
+[3] X. Zhang, Y. Xu, Q. Lin, B. Qiao, H. Zhang, Y. Dang, C. Xie, X. Yang,
+Q. Cheng, Z. Li, J. Chen, X. He, R. Yao, J.-G. Lou, M. Chintalapati,
+F. Shen, and D. Zhang, “Robust log-based anomaly detection on unstable
+log data,” in Proceedings of the 2019 27th ACM Joint Meeting on
+European Software Engineering Conference and Symposium on the
+Foundations of Software Engineering, ser. ESEC/FSE 2019. New York,
+NY, USA: Association for Computing Machinery, 2019, p. 807–817.
+[4] L. Mariani and F. Pastore, “Automated identiﬁcation of failure causes
+in system logs,” in Software Reliability Engineering, 2008. ISSRE 2008.
+19th International Symposium on, Nov 2008, pp. 117–126.
+[5] A. Petrenko and F. Avellaneda, “Learning communicating state ma-
+chines,” in Tests and Proofs - 13th International Conference, TAP 2019,
+Held as Part of the Third World Congress on Formal Methods 2019,
+Porto, Portugal, October 9-11, 2019, Proceedings, 2019, pp. 112–128.
+[6] I. Beschastnikh, Y. Brun, M. D. Ernst, and A. Krishnamurthy, “Inferring
+models of concurrent systems from logs of their behavior with csight,”
+in Proceedings of the 36th International Conference on Software
+Engineering, ser. ICSE 2014.
+New York, NY, USA: ACM, 2014,
+pp. 468–479. [Online]. Available: http://doi.acm.org/10.1145/2568225.
+2568246
+[7] S. Salva and E. Blot, “Cktail: Model learning of communicating
+systems,” in Proceedings of the 15th International Conference on
+Evaluation of Novel Approaches to Software Engineering, ENASE 2020,
+Prague, Czech Republic, May 5-6, 2020, R. Ali, H. Kaindl, and L. A.
+Maciaszek, Eds.
+SCITEPRESS, 2020, pp. 27–38.
+[8] A. Barros, G. Decker, M. Dumas, and F. Weber, “Correlation patterns in
+service-oriented architectures,” in Fundamental Approaches to Software
+Engineering, M. B. Dwyer and A. Lopes, Eds.
+Berlin, Heidelberg:
+Springer Berlin Heidelberg, 2007, pp. 245–259.
+[9] OASIS
+Consortium,
+“Ws-bpel
+version
+2.0,”
+April
+2007,
+http://docs.oasis-open.org/wsbpel/2.0/OS/wsbpel-v2.0-OS.pdf, Accessed
+on 09.2021.
+[10] Q. Fu, J.-G. Lou, Y. Wang, and J. Li, “Execution anomaly detection in
+distributed systems through unstructured log analysis,” 2009 Ninth IEEE
+International Conference on Data Mining, pp. 149–158, 2009.
+[11] A. Makanju, A. N. Zincir-Heywood, and E. E. Milios, “A lightweight
+algorithm for message type extraction in system application logs,” IEEE
+Transactions on Knowledge and Data Engineering, vol. 24, no. 11, pp.
+1921–1936, Nov 2012.
+[12] R. Vaarandi and M. Pihelgas, “Logcluster - a data clustering and pattern
+mining algorithm for event logs,” in 2015 11th International Conference
+on Network and Service Management (CNSM), Nov 2015, pp. 1–7.
+[13] S. Messaoudi, A. Panichella, D. Bianculli, L. Briand, and R. Sasnauskas,
+“A search-based approach for accurate identiﬁcation of log message
+formats,”
+in
+Proceedings
+of
+the
+26th
+Conference
+on
+Program
+Comprehension, ser. ICPC ’18.
+New York, NY, USA: ACM, 2018,
+pp. 167–177. [Online]. Available: http://doi.acm.org/10.1145/3196321.
+3196340
+[14] J. Zhu, S. He, J. Liu, P. He, Q. Xie, Z. Zheng, and M. R.
+Lyu, “Tools and benchmarks for automated log parsing,” CoRR,
+vol. abs/1811.03509, 2018, accessed on 09.2021. [Online]. Available:
+http://arxiv.org/abs/1811.03509
+[15] A. Biermann and J. Feldman, “On the synthesis of ﬁnite-state machines
+from samples of their behavior,” Computers, IEEE Transactions on, vol.
+C-21, no. 6, pp. 592–597, June 1972.
+[16] X. Fu, R. Ren, J. Zhan, W. Zhou, Z. Jia, and G. Lu, “Logmaster: Mining
+event correlations in logs of large-scale cluster systems,” in 2012 IEEE
+31st Symposium on Reliable Distributed Systems, 2012, pp. 71–80.
+[17] L. Liu and J. Liu, “Mining web log sequential patterns with layer
+coded breadth-ﬁrst linked wap-tree,” in 2010 International Conference
+of Information Science and Management Engineering, vol. 1, 2010, pp.
+28–31.
+[18] B. Serrour, D. P. Gasparotto, H. Kheddouci, and B. Benatallah, “Mes-
+sage correlation and business protocol discovery in service interaction
+logs,” in Advanced Information Systems Engineering, Z. Bellahs`ene and
+M. L´eonard, Eds. Berlin, Heidelberg: Springer Berlin Heidelberg, 2008,
+pp. 405–419.
+[19] K. Musaraj, T. Yoshida, F. Daniel, M.-S. Hacid, F. Casati, and
+B. Benatallah, “Message Correlation and Web Service Protocol Mining
+from Inaccurate Logs,” in IEEE International Conference on Web
+Services.
+Miami, Florida, United States: IEEE Computer Society, Jul.
+2010, pp. 259–266. [Online]. Available: https://hal.archives-ouvertes.fr/
+hal-01381551
+[20] S. Dustdar and R. Gombotz, “Discovering web service workﬂows using
+web services interaction mining,” Int. J. Bus. Process. Integr. Manag.,
+vol. 1, pp. 256–266, 2006.
+[21] R. Conforti, M. Dumas, L. Garc´ıa-Ba˜nuelos, and M. La Rosa,
+“Bpmn miner: Automated discovery of bpmn process models with
+hierarchical
+structure,”
+Information
+Systems,
+vol.
+56,
+pp.
+284–
+303, 2016. [Online]. Available: https://www.sciencedirect.com/science/
+article/pii/S0306437915001325
+[22] H. R. Motahari Nezhad, R. Saint-Paul, F. Casati, and B. Benatallah,
+“Event correlation for process discovery from web service interaction
+logs,” VLDB J., vol. 20, pp. 417–444, 06 2011.
+[23] D. Lorenzoli, L. Mariani, and M. Pezz`e, “Automatic generation of
+software behavioral models,” in Proceedings of the 30th International
+Conference on Software Engineering, ser. ICSE’08.
+New York, NY,
+USA: ACM, 2008, pp. 501–510.
+[24] I. Beschastnikh, Y. Brun, S. Schneider, M. Sloan, and M. D. Ernst,
+“Leveraging existing instrumentation to automatically infer invariant-
+constrained models,” in Proceedings of the 19th ACM SIGSOFT Sym-
+posium and the 13th European Conference on Foundations of Software
+Engineering, ser. ESEC/FSE ’11.
+New York, NY, USA: ACM, 2011,
+pp. 267–277.
+[25] T. Ohmann, M. Herzberg, S. Fiss, A. Halbert, M. Palyart, I. Beschast-
+nikh, and Y. Brun, “Behavioral resource-aware model inference,” in Pro-
+ceedings of the 29th ACM/IEEE International Conference on Automated
+Software Engineering, ser. ASE ’14. New York, NY, USA: ACM, 2014,
+pp. 19–30.
+[26] F. Pastore, D. Micucci, and L. Mariani, “Timed k-tail: Automatic
+inference of timed automata,” in 2017 IEEE International Conference
+on Software Testing, Veriﬁcation and Validation (ICST), March 2017,
+pp. 401–411.
+[27] L. Mariani and M. Pezze, “Dynamic detection of cots component
+incompatibility,” IEEE Software, vol. 24, no. 5, pp. 76–85, 2007.
+[28] S. Salva and E. Blot, “Confect: An approach to learn models of
+component-based systems,” in Proceedings of the 13th International
+Conference on Software Technologies, ICSOFT 2018, Porto, Portugal,
+July 26-28, 2018., 2018, pp. 298–305.
+42
+Copyright (c) IARIA, 2021.     ISBN:  978-1-61208-894-5
+ICSEA 2021 : The Sixteenth International Conference on Software Engineering Advances
+

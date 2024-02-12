@@ -1,0 +1,1540 @@
+A Secure Logging Framework with Focus on
+Compliance
+Felix von Eye, David Schmitz, and Wolfgang Hommel
+Leibniz Supercomputing Centre, Munich Network Management Team, Garching n. Munich, Germany
+Email:{voneye,schmitz,hommel}@lrz.de
+Abstract—Handling log messages securely, for example, on
+servers or embedded devices, has often relied on cryptographic
+messages authentication codes (MACs) to ensure log ﬁle integrity:
+Any modiﬁcation or deletion of a log entry will invalidate the
+MAC, making the tampering evident. However, organizational se-
+curity requirements regarding log ﬁles have changed signiﬁcantly
+over the decades. For example, European privacy and personal
+data protection laws mandate that certain information, such as
+IP (internet protocol) addresses, must only be stored for a certain
+retention period, typically seven days. Traditional log ﬁle security
+measures, however, do not support the delayed deletion of partial
+log message information for such compliance reasons. This article
+presents SLOPPI (secure logging with privacy protection and
+integrity), a three-tiered log management framework with focus
+on integrity management and compliance as well as optional
+support for encryption-based conﬁdentiality of log messages.
+Keywords-log ﬁle management; secure logging; compliance; log
+message encryption; privacy by design.
+I. INTRODUCTION
+For the secure logging, von Eye et al. presented SLOPPI
+[1] – a framework for secure logging with privacy protection
+and integrity, which is extended in this article. This framework
+helps to ensure that the log ﬁles, independent of the storage
+format, fulﬁll the well-known goals of information technology
+security:
+• The log’s integrity must be ensured: Neither a malicious
+administrator nor an attacker, who successfully has com-
+promised a system, shall be able to delete or modify
+existing, or insert bogus log entries.
+• The log shall not violate compliance criteria. For exam-
+ple, European data protection laws regulate the retention
+of personal data, which includes, among many others,
+user names and IP addresses. These restrictions also
+apply to log entries according to several German courts’
+verdicts that motivate the presented approach; details are
+part of previous work [2].
+• The conﬁdentiality of log entries shall be safeguarded;
+i. e., read access to log entries shall be conﬁned to an
+arbitrary set of users.
+• The availability of log entries shall be made sure of.
+The security of log ﬁles is a very important aspect in
+the overall security concept of a service or device. Many
+attacks or resource abuse cases can be detected by analyzing
+log ﬁles as part of a forensics process, just like system or
+service breakdowns. With the knowledge embedded in log
+data, administrators and forensics experts are often able to
+reconstruct the way an attacker was intruding the system or
+the root cause of the system disaster.
+Because of the concentrated information, the log data is
+often a primary target of attackers once they have compro-
+mised the system. On the one hand, an attacker could erase the
+whole log ﬁle to cover up the traces. This a very efﬁcient way
+but it also provides a clear information that something went
+wrong on the system, which most likely will arouse the system
+administrator’s suspicion or trigger an automated alert. When
+this happens, the administrator is able to detect the attack very
+fast, even if not every detail can be reconstructed. On the other
+hand, an attacker could change some of the log entries in a way
+that the manipulation is not obvious. The approach presented
+in this article focuses on the second scenario. In any way it
+would be possible for an attacker to fully delete the log ﬁles,
+which cannot be circumvented as long as the log ﬁle resides on
+a fully compromised machine. Even if there is the possibility
+to store the log ﬁles on an external system, such as a log server,
+the attacker can be able to disturb the connection between the
+system and the log server, e. g., by ﬁrewalling the connection,
+once the system has been hacked and the attacker managed
+to get administrator privileges. But beside this, there are also
+a lot of systems, which cannot be connected to a central log
+server, e. g., because of the mobility of the systems or when
+the organization is too small to operate a dedicated central log
+server.
+This motivates the SLOPPI approach [1], which allows ad-
+ministrators to protect their log ﬁles against unwanted changes,
+while the deletion of log ﬁles, e. g., a regular log rotation, is
+still possible. The SLOPPI architecture allows administrators
+to have long time logs, while privacy related parts of the
+log ﬁle can be deleted after a well-deﬁned period of time.
+In this article, the SLOPPI approach, which has substantially
+been improved since its introduction in [1], is presented. The
+primary limitation of the previous SLOPPI approach was, that
+the deletion of log entries also deletes any other information
+inside this log entry. So, it was not possible to keep parts of
+the information, e. g., for statistical or diagnostic reasons. In
+this paper we deal with this drawback and present an improved
+and more detailed approach, which is now able to keep some
+predeﬁned parts of the information.
+This work is motivated by the large-scale distributed envi-
+ronment of the SASER-SIEGFRIED project (Safe and Secure
+European Routing) [3], in which more than 50 project partners
+design and implement network architectures and technologies
+37
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+for secure future networks. The project’s goal is to remedy
+security vulnerabilities of today’s IP layer networks in the
+2020 timeframe. Thereby, security mechanisms for future
+networks are designed based on an analysis of the currently
+predominant security problems on the IP layer, as well as
+upcoming issues such as vendor-created loopholes and SDN-
+based (software deﬁned network) trafﬁc anomaly detection.
+The project focuses on inter-domain routing, and routing
+decisions are based on security metrics that are part of log
+entries sent by active network components to central network
+management systems; therefore, the integrity of this data must
+be protected, providing a use case that is similar to traditional
+intra-organizational log ﬁle management applications.
+The remainder of this article is structured as follows:
+Section II introduces the terminology and notation that is used
+throughout the article. In Section III, the related work and state
+of the art as well as its inﬂuence on the design of SLOPPI are
+discussed. SLOPPI’s architecture and workﬂows are presented
+in-depth in Section IV. The process for verifying the integrity
+of SLOPPI log ﬁles is speciﬁed in Section V. Before the ar-
+ticle’s conclusion, Section VI analyzes the security properties
+of SLOPPI.
+II. TERMINOLOGY
+In this article, a few terms and symbols are used to avoid
+ambiguity. These symbols and terms have the following mean-
+ing:
+• In the special focus of this work is the untrusted device
+U, which could be for example a web server or a Linux
+system. As a matter of its regular operations, U produces
+log data, which is saved in one or more log ﬁles. As
+U is a system, which is not necessarily hardened in any
+matter, it can be assumed that U may be compromised by
+an attacker and therefore, the log data is not guaranteed
+to be trustworthy, i. e., the security goals conﬁdentiality,
+integrity, and availability cannot reliably be achieved.
+However, the SLOPPI approach can be used to ensure
+the integrity and compliance of log data produced by U,
+making it reliable under this speciﬁc aspect.
+• A trusted machine T . In any related work there is a need
+for a separate machine T ̸= U. The working assumption
+in the related work is that T is secure, trustworthy, and
+not under the control of an attacker at any point in time.
+In the presented approach, T is not needed any more
+as a fully-ﬂedged computer system. To ensure a uniform
+notation, T is also used in the following sections in the
+meaning of a trusted storage for a security key, e. g., a
+piece of paper that is written on with a pencil. As long as
+this written paper cannot be read by an outside attacker,
+it can be assumed as trusted enough. Certainly there are
+also other solutions, for example, saving the key on a
+USB memory device (universal serial bus), but in this
+article the focus is not on the hardening of T because
+ofﬂine and analogous solutions are sufﬁcient.
+• The veriﬁer V. Related work often differentiates T and
+V; V then is only responsible for verifying the integrity
+and compliance of a log ﬁle or log stream. In this case,
+T is only used to store the needed keys and V does not
+have to be as trustworthy as T . Also in this case, T is
+able to modify any log entry, while V is not.
+These symbols are used for cryptographic operations:
+• A strong cryptographic hash function H, which has to
+be a one way function, i. e., a function, which is easy to
+compute but hard to reverse, e. g., SHA-256(m) (Secure
+Hash Algorithm) or Keccak.
+• HMACk(m) (hash-based message authentication code).
+The message authentication code of the message m using
+the key k.
+SLOPPI does not anticipate, which particular function
+should be used for cryptographic functions; instead, they
+should be chosen speciﬁcally based on each implementation’s
+security requirements and constraints, such as available pro-
+cessing power, system and data sensitivity, and induced storage
+overhead.
+Furthermore, without loss of generality, the terms log ﬁles,
+log entries, and log messages are discerned as follows:
+• A log ﬁle is an ordered set of log entries. The order is
+implied by the order, in which log messages are received
+by SLOPPI.
+• In line-based logs, a log entry normally corresponds
+to one line of the log ﬁle. Otherwise, a log entry
+consists of all information, which is related to one
+event. For example, on a typical Linux system, the
+ﬁle /var/log/messages is a text-based log ﬁle and
+each line therein is a log entry; log entries are written
+in chronological order to this log ﬁle. For massively
+parallel operations, the resulting order is determined by
+the implementation of a syslog-style system service at
+run-time based on criteria outside the scope of this article.
+Log entries cannot be re-ordered once they have been
+written to a log ﬁle in the SLOPPI architecture, which is
+consistent with related work. Other log ﬁle formats, such
+as the proprietary binary Microsoft Windows event log
+format, can also be used with SLOPPI; for simplicity,
+however, all the examples given in this article refer to
+text-based log ﬁles with one log entry per line of text.
+• Log messages are the payload of log entries; typically,
+log messages are human-readable character strings that
+are created by applications or system/device processes.
+Besides a log message, a log entry includes metadata,
+such as a timestamp and information about the log mes-
+sage source. Log messages typically have an application-
+speciﬁc structure of their own, which SLOPPI exploits
+for its slicing technique as detailed below.
+As shown in Figure 4, the SLOPPI approach uses several log
+ﬁles, which are related to each other in the following way: The
+master log Lm is the root of the SLOPPI data structure and
+only used twice a day to ﬁrst generate and to then close a new
+integrity stream for the so-called daily log Ld. This log ﬁle Ld
+is basically used to minimize the storage needs for the master
+log Lm, which must never be deleted and therefore shall not
+38
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+contain any personal data or otherwise potentially compliance-
+offending content; otherwise, no complete veriﬁcation of the
+integrity of all log messages could be performed. Ld is kept
+as long as necessary and contains a new integrity stream for
+the application logs La. These logs, e. g., the access.log
+or the error.log generated by an Apache web server
+or the firewall.log created by a local ﬁrewall, are re-
+started from scratch once per day and yield all information
+generated by the related processes; they are extended by
+integrity check data. Please note that other intervals than 24
+hours are arbitrarily possible, but daily log ﬁle rotation are
+most commonly used and the term is used here for its clarity.
+After an arbitrarily speciﬁed retention time – seven days in
+the SASER scenario – these logs, which contain privacy-law
+protected data, have to be cleaned up or purged completely
+because of legal constraints in Germany and various other
+countries. It is important to mention that a simple deletion of
+whole log ﬁles or log entries would also remove any informa-
+tion about attempted intrusions and other attack sources. This
+would cover an intruder, who could be detected by analyzing
+the log ﬁles, so the log ﬁle should be analyzed periodically
+before this automated deletion. Other time periods than full
+days or a rotation that is based, e. g., on a maximum number
+of log entries per log ﬁle, as well as other deletion periods
+may be applied – but for the sake of simplicity daily logs
+and a seven day deletion period are used for the remainder of
+this article. This setup is also used in the SASER project and
+currently recommended for IT services operated by European
+providers.
+Extending [1], this article presents details about how the
+application logs can be handled with a ﬁne-grained policy
+that allows to keep as much information as needed arbi-
+trarily longer than the mentioned seven days, while still
+being compliant. We also discuss log message encryption to
+ensure conﬁdentiality and how SLOPPI can be used to secure
+structured log messages, for example, in order to remove sub-
+strings from log messages for privacy reasons, to serve as a
+data source for business intelligence tools, and to facilitate the
+visualization of security-related log entries.
+III. RELATED WORK
+With the exception of Section III-A, none of related work
+offers a possibility to fulﬁll compliance as it is not possible to
+delete log entries or parts thereof a posteriori. Complementary,
+the approach summarized in Section III-A does not address the
+integrity issues.
+A. Privacy-enhancing log rotation
+Metzger et al. presented an organization-wide concept for
+privacy-enhancing log rotation in [4]. In this work, log entries
+are deleted by log ﬁle rotation after a period of seven days,
+which is a common retention period in Germany based on
+several privacy-related verdicts. Based on surveys, Metzger
+et al. identiﬁed more than 200 different types of log entry
+sources that contain personal information in a typical higher
+education data center. Although deleting log entries after
+l0
+s0
+s1=H(s0)
+s2=H(s1)
+s3=H(s2)
+s4=H(s3)
+s5=H(s4)
+l1
+l2
+l3
+l4
+HMACs (l0)
+               0
+HMACs (l1)
+               0
+HMACs (l2)
+               0
+HMACs (l3)
+               0
+HMACs (l4)
+               0
+Fig. 1.
+The basic idea behind Forward Integrity as suggested in [5].
+seven days seems to be a simple solution, the authors discuss
+the challenges of implementing and enforcing a strict data
+retention policy in large-scale distributed environments.
+B. Forward integrity
+Bellare and Yee introduced the term Forward Integrity in
+[5]. This approach is based on the combination of log entries
+with message authentication codes (MACs). Once a new log
+ﬁle is started, a secret s0 is generated on U, which has to be
+sent in a secure way to a trusted T . This secret is necessary
+to verify the integrity of a log ﬁle.
+Once the ﬁrst log entry l0 is written to the log ﬁle, the
+HMAC of l0 based on the key s0 is calculated and also
+written to the log ﬁle. To protect the secret s0, there is another
+calculation of s1 = H(s0), which is the new secret for the
+next log entry l1. To prevent that an attacker can easily create
+or modify log entries, the old and already used secret key
+for the MAC function is erased after the calculation securely.
+Because of the characteristics of one-way functions, it is not
+possible for an attacker to derive the previous key backwards
+in maintainable time. Figure 1 shows the underlying idea.
+In their approach, in order to verify the integrity of the
+log ﬁle, V has to know the initial key to verify all entries
+in sequential order. If the log entry and the MAC do not
+correspond, the log ﬁle has been corrupted from this moment
+on, and any subsequent entry is no longer trustworthy.
+However, the strict use of forward integrity also prohibits
+authorized changes to log entries; for example, if personal
+data shall be removed from log entries after seven days, the
+old MAC must be thrown away and a new MAC has to be
+calculated. While this is not a big issue from a computational
+complexity perspective, it means that the integrity of old log
+entries may be violated during this rollover if U has meanwhile
+been compromised.
+C. Encrypted log ﬁles
+Schneier and Kelsey developed a cryptographic scheme to
+secure encrypted log ﬁles in [6]. They motivated the approach
+for encrypting each log entry with the need of conﬁdential
+logging, e. g., in ﬁnancial applications. Figure 2 shows the
+process to save a new log entry. Any log entry Dj on U is
+encrypted with the key Kj, which in turn is built from the
+secret Aj (in this article sj) and an entry type Wj. This entry
+type allows V to only verify predeﬁned log entries. There is
+also some more information stored in a log entry, namely Yj
+39
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+Fig. 2.
+The Schneier and Kelsey approach taken from [6].
+Figure 4: Forward security with public veriﬁability.
+entry could create arbitrary alternative entries which
+would also appear correct.
+Public key cryptography provides the ability to
+separate signing from veriﬁcation and encryption
+from decryption. This section describes how the sign-
+ing/veriﬁcation separation can be used to create logs
+which can be veriﬁed by anyone. We omit discussion
+of creative applications of the encryption/decryption
+separation, although several such applications are
+possible, particularly when using identity based en-
+cryption.
+Bellare and Miner proposed a public key counter-
+part to hash chains in [2] which could be used with
+Figure 5: Verifying entries in the public key schem
+Create
+random
+keypa
+⟨(pub1, private1)..(pubn, privaten)⟩
+Create the meta-entry listing the pub
+keys: meta = ⟨pub1..pubn⟩
+Generate the signature on the meta-entr
+sig0 = Sign(private0, meta)
+Securely delete private0. (pub0 may also
+removed).
+Output ⟨meta, sig0⟩
+Set i = 0
+Loop
+Increment i
+If i == n, exit the inner loop
+Wait for the next log entry: logi
+Calculate sigi = Sign(privatei logi)
+Fig. 3.
+The Holt approach taken from [7].
+and Zj, which are used to allow the veriﬁcation of a log entry
+without the need of decryption of Dj. Therefore, only T is
+able to modify the log ﬁles.
+However, this approach does not allow for the deletion
+method of log entries or parts thereof because then the
+veriﬁcation would inevitably break.
+D. Public key encryption
+Holt used a public/private-key-based veriﬁcation process
+in his approach to allow a complete disjunction of T and
+V in [7]. Therefore, a limited amount of public/private-key
+pairs are generated. The public keys are stored in a meta-log
+entry, which is signed with the ﬁrst public key, which should
+be erased afterwards securely. All other log entries are also
+signed with the precomputed private keys. If there are no more
+keys left, a new limited amount of public/private-key pairs are
+generated.
+The main beneﬁt of this approach is that the veriﬁer V
+cannot modify any log entry because it only knows the public
+keys, which can be used for verifying the signature but does
+not allow any inference on the used private key.
+E. Aggregated Signatures
+In scenarios where disk space is the limiting factor it is
+necessary that the signature, which protects each single log
+entry, does not take much space. In all of the approaches
+sketched above, the disk usage by signatures is within O(n),
+where n is the total amount of log entries. To deal with a
+more space-constrained scenario, Ma and Tsudik presented a
+new signature scheme, which aggregates all signatures of the
+log entries in [8]. This approach uses archiving so that the
+necessary disk space amount is reduced to only O(1).
+The main drawback of this approach is that a manipulation
+of a single log entry would break the veriﬁcation process,
+yet the veriﬁer is not able to determine, which (presumably
+modiﬁed) entry causes the veriﬁcation process to fail. As a
+consequence, it is also not possible to delete or to modify
+log entries, e. g., to remove personal data after reaching the
+maximum retention time.
+F. BAF
+Yavuz and Ning speciﬁed how log entries can be secured
+by using blind signatures in [9]. Their approach uses the log
+entry combined with the actual number of the log entry. For
+example, if the log entry Dn is the nth entry in the log ﬁle,
+Dn is combined with the number n to prevent an attacker
+from reordering the log entries. This result is hashed and
+modiﬁed with the secret key (a, b) by using a simple addition
+and multiplication modulo a large prime p. As in all other
+approaches, the secret key is updated and the previous version
+securely deleted.
+The most interesting result of this approach is that a
+veriﬁcation is possible for a veriﬁer V, while it is not possible
+for V to modify any entry in the log ﬁle. This property is
+normally only satisﬁed by public/private key schemes, which
+are typically very expensive to compute.
+IV. THE SLOPPI ARCHITECTURE AND WORKFLOWS
+SLOPPI, as presented in [1], follows the classic client-
+server architecture of well-known POSIX (Portable Operat-
+ing System Interface) logging mechanisms, such as syslog-
+ng and rsyslog. Any SLOPPI implementation therefore is a
+continuously running process, which offers interfaces, such
+as an application programming interface (API) and IPC (IP
+code), TCP (Transmission Control Protocol) or UDP (User
+Datagram Protocol) sockets, to receive new log messages from
+various system services, applications, or remote servers. After
+internal processing, log entries are stored in plain-text ﬁles
+in the local ﬁle system, where they can be processed with
+whichever log ﬁle viewing mechanism the local users are
+familiar with; alternatively, log entries can be forwarded to
+remote SLOPPI servers where they are treated in the same
+manner. If the application log ﬁles make use of the optional
+encryption, SLOPPI tools can be used to decrypt the log
+entries using standard input and output channels, typically in
+combination with POSIX pipes. Similar tools can be used to
+strip any SLOPPI-speciﬁc information from log entries so any
+other log ﬁle processing tools can be used for parsing and
+40
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+processing the application log ﬁles even if they are not aware
+of the extensions brought by the SLOPPI data format.
+As SLOPPI has been designed with compliance regulations
+as its primary motivation, ensuring integrity and allowing
+for log-ﬁle rotation without cryptographic re-keying are its
+core functionality. In the following sections, ﬁrst described
+is how the master log, the daily log, and the application
+log are intertwined to achieve these properties. Afterwards
+follows a discussion of the various optional functionalities for
+the application logs, e. g., the encryption of application log
+messages.
+A. The SLOPPI log ﬁle hierarchy
+The analysis of the related work shows that there is no
+solution yet that fulﬁlls both necessary minimum requirements
+for log ﬁles: integrity and compliance, where the latter requires
+making changes to integrity-checked log entries once they
+have reached a certain age. The SLOPPI approach combines
+key operations from previous approaches in a new innovative
+way to achieve both characteristics. As introduced in Sec-
+tion II, a couple of types of log ﬁles, which are all handled
+a bit differently, are used for the framework. They form the
+following hierarchy as shown in Figure 4:
+• The master log ﬁle is the root of the SLOPPI data format.
+It is created only once and must not be deleted. If it
+is deleted, e. g., by an attacker, integrity checking is no
+longer possible.
+• The daily log ﬁles are, as implied by their name, created
+in a daily manner. Although other rollover periods could
+be used, such as hourly or weekly, we refer to them as
+daily logs for the sake of simplicity and because they
+are a de-facto industry standard. Daily log ﬁles can be
+deleted after a retention period, for which 7 days is the
+standard setting; it is, however, recommended to delete
+the affected application log ﬁles ﬁrst.
+• Application log ﬁles are the only log ﬁles, in which actual
+payload log messages are stored – both the master log
+and the daily logs only contain SLOPPI-speciﬁc meta-
+information. There can be an arbitrary number of appli-
+cation log ﬁles depending on how many ﬁles all the log
+information should be scattered across. SLOPPI supports
+the typical syslog-like distribution of log messages to log
+ﬁles based on the originating host, application, log level,
+and log message content in an administrator-conﬁgured
+manner. While storing a log message in exactly one log
+ﬁle is the usual mode of operation, the same log message
+can be logged to multiple log ﬁles if desired, or thrown
+away without being written to a ﬁle, and therefore without
+inﬂuencing the integrity mechanism. As an alternative to
+local log ﬁles, log entries can also be forwarded to remote
+SLOPPI services, which treat them similarly to locally
+logged messages; communication is secured using TLS
+(Transport Layer Security) connections.
+At the very core of SLOPPI, the master log ﬁle Lm has
+to be secured. As it has only a few entries per day, it
+can be protected using a public key scheme, e. g., RSA, to
+protect the log entries, which is described in detail in the
+upcoming Section IV-B. In the subsequent sections, the two
+keys of a public key scheme are called signing key (ksign) and
+authentication key (kauth).
+Then the daily log ﬁle Ld is considered in Section IV-C.
+Similar to the master log ﬁle, it only has very few entries
+per day, but they already must be considered too many entries
+for using public key schemes, so a symmetric key scheme is
+certainly the best choice. Finally, application log ﬁle details
+and options are presented in Section IV-D.
+B. The SLOPPI Master Log File
+As stated above, the master log ﬁle Lm contains important
+data of the SLOPPI approach to protect the integrity of the
+log ﬁles. To protect Lm, the following steps are necessary:
+1) Log Initialization: Whenever a new master log is initial-
+ized, U generates an authentication key (k1
+auth) and a signing
+key (k1
+sign). These two keys are important to protect (using
+k1
+sign) now and to verify (using k1
+auth) the log ﬁle later. As
+the veriﬁcation key should not be stored on U , it is sent
+to T over a secure connection, e. g., a TLS connection. As
+mentioned above, it is not necessary that T is a computer
+system as k1
+auth could also written on a piece of paper by
+the administrator. But mostly it could be assumed that T is
+a specially secured and encrypted database. After sending the
+authentication key, U deletes (k1
+auth) securely.
+U can now initialize the master log ﬁle by saving the ﬁrst
+message STARTING LOG FILE in the log ﬁle as described
+next. For this step, k1
+sign is the actually used secret. Important
+is that the master log is normally generated only once per
+SLOPPI instance.
+2) Saving New Log Entries: Let m be the log message of
+the log entry to be stored in the log ﬁle. As the master log
+ﬁle has only one entry per day, it can be assumed that there is
+enough time between saving the last entry and the actual one to
+generate a new authentication/signing key pair (kn+1
+auth, kn+1
+sign ),
+while kn
+sign is the actual secret.
+U now generates
+m∗ = (timestamp,m, kn+1
+auth)
+and computes
+e = Enckn
+sign(m∗).
+The result e is the new log entry, which is written to the
+log ﬁle. Immediately after calculating the encrypted result,
+the keys kn
+sign, kn+1
+auth, which are not needed anymore, are
+erased securely from the system. Now the master log ﬁle only
+contains fully encrypted data and kn+1
+sign is the secret for the
+next log entry. The motivation for the data format used for m∗
+is the following:
+• The timestamp is used to verify the time, at which a new
+event is logged in the master log. An abnormal high or
+low rate of entries in a speciﬁc time interval can indicate
+a system failure or an attack. To prevent any changes of
+the timestamp, this is also part of the encrypted data. item
+41
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+init
+init
+init
+Start day 1
+START
+Master Log
+Stop day 1
+Start day 2
+Stop day 2
+Start day 3
+Stop day 3
+...
+...
+Start app 1
+START
+Start app 2
+Stop app 2
+Stop app 1
+END
+Start app 1
+START
+Daily Log (day 2)
+Start app 2
+Stop app 1
+Stop app 2
+END
+...
+Log entry
+START
+Application 1 (day 1)
+Log entry
+...
+END
+Log entry
+START
+...
+END
+Log entry
+START
+...
+END
+init
+init
+init
+close
+close
+close
+close
+Daily Log (day 1)
+Application 2 (day 1)
+Application 1 (day 2)
+Fig. 4.
+Overview of all relevant log ﬁles.
+The log message m has to be encrypted, to protect the
+main content of the log entry.
+• kn+1
+auth is the veriﬁcation key for the next log entry. This is
+the application of the forward integrity approach, because
+the necessary information to decrypt and to verify the
+next step are all available if the previous veriﬁcation and
+decryption step is completed. As this is data very worthy
+of protection, it is naturally part of the encrypted data.
+For example, let the ﬁrst log message be
+m = STARTING LOG FILE
+and the actual secret k1
+sign. After generating (k2
+auth, k2
+sign), U
+now composes
+m∗ = (1408096800, STARTING LOG FILE, k2
+auth)
+and computes
+e = Enck1
+sign(m∗)
+= Enck1
+sign(1408096800, STARTING LOG FILE, k2
+auth),
+which is written to the log ﬁle. Now, k1
+sign and k2
+auth are
+deleted securely.
+3) Closing the Log File: During regular SLOPPI operation,
+there should not be the need to close the master log ﬁle. But
+in case of a system restart, a serious failure, or in the case
+where the storage requirement of the master log is too much
+increasing, there can be the desire to restart the master log.
+If the master log ﬁle has to be closed gracefully, the last
+message CLOSING LOG FILE is saved into the log ﬁle. It
+is important that in this case it is not necessary to generate
+a new key pair and therefore, the next authentication key is
+also irrelevant. To fulﬁll the data format deﬁned above, it is
+needed that the log entry consists the next authentication key,
+which is set to an empty string.
+4) Content of Log Messages: As Lm is used as a meta log,
+which does not contain any application or system messages,
+the content of the log messages m are now speciﬁed. As
+mentioned before, the daily log is encrypted with a symmetric
+crypto scheme. Every day a new daily log is initialized by the
+system. The name and location of the created daily log is the
+variable p1. Furthermore, the variable p2 is the ﬁrst entry in Ld
+and ﬁnally the variable p3 appoints the necessary key for the
+log initialization step. m is then the concatenation of p1, p2,
+and p3, e. g., /var/log/2014-08-15.log;STARTING
+LOG FILE;VerySecretKey together with H(p1, p2, p3).
+Because of the need to detect manipulations of Lm, it is
+necessary that m also contains a hash value of p1, p2, and p3.
+With the knowledge of H(p1, p2, p3) it is possible to detect
+where the decryption process failed exactly.
+C. The SLOPPI Daily Log File
+The main reason to use the daily log is to reduce the storage
+space requirements of the main log. It is quite unusual that
+the main log is initialized for a second time if the system is
+running normally. There are round about two entries per day,
+which have to be stored over a long time. The daily log could
+be deleted after all application logs mentioned in this speciﬁc
+daily log are deleted. Depending on the amount of running
+applications on a server it is not unusual that there is much
+more than one application log used on a system.
+1) Log Initialization: Every day a new daily log has to
+be initialized if a daily log rotation is conﬁgured on the
+system. Otherwise, another initialization interval is used for
+starting a new daily log. At the beginning, U generates a
+symmetric key ksym which is necessary for both, encryption
+and veriﬁcation. This key is the initial secret and has to stored
+in a trusted space, e. g., on T . As the SLOPPI approach does
+not need a separate T , the already existing Lm is used as a
+trusted third party. As described above, it is unlikely that an
+42
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+attacker can get information out of Lm because this log ﬁle is
+fully encrypted. If the attacker has already compromised the
+system, no new log message can be trusted any longer and the
+attacker is able to modify any computation step. Therefore,
+it is secure to store the key inside of Lm. The key ksym is
+now written together with the name and the path of the actual
+log ﬁle. This information is combined with the ﬁrst message
+STARTING LOG FILE.
+The actually used secret is now ksym. U
+can then
+initialize the daily log ﬁle by saving the ﬁrst message
+STARTING LOG FILE in the log ﬁle as described next.
+2) Saving New Log Entries: To encrypt the important
+information of the daily log, a symmetric key scheme is used,
+e. g., AES (Advanced Encryption Standard). In difference to
+the master log, not all of the information stored in Ld can be
+encrypted, because parts are needed in plain text during later
+steps as detailed below.
+Let (m, m′) be the message that has to be stored in the
+log entry and kold
+sym the actually used secret key. The precise
+meaning of (m, m′) is deﬁned below along with the log
+message content.
+U now randomly chooses a new secret key knew
+sym. Because
+of the use of symmetric key schemes, this step is not compu-
+tationally expensive. Analogous to the master log processing,
+an expended message is now generated by U, which has the
+structure
+m∗ = (timestamp, m, knew
+sym, H(m′, (timestamp, m, knew
+sym)))
+. With this, the log entry
+e = (m′, Enckold
+sym(m∗))
+can be computed, which is written to the log ﬁle. The hash
+value is stored for veriﬁcation purposes, so it is possible to
+detect the exact log entry where a manipulation took place.
+Immediately after calculating the encrypted result, the key
+kold
+sym, which is not needed anymore, is erased securely from
+the system. Now knew
+sym is the secret for the next log entry. The
+motivation for the data format used for m∗ is the following:
+• The timestamp is used to verify the time when a new
+event is logged in the daily log. An abnormal high or
+low rate of entries in a speciﬁc time interval can indicate
+a system failure or an attack. To prevent any changes of
+the timestamp, this is also part of the encrypted data.
+• The log message m has to be trivially encrypted, to
+protect the main content of the log entry. Besides m, there
+is also a part of information, which has to remain in plain
+text to use them in the typical usage of the SLOPPI tools.
+• knew
+sym is the veriﬁcation key for the next log entry. This is
+the application of the forward integrity approach, because
+the necessary information to decrypt and to verify the
+next step are all available if the previous veriﬁcation and
+decryption step is completed. As this is a data very worthy
+of protection, it again is naturally part of the encrypted
+data.
+3) Closing the Log File: If the daily log ﬁle has to be
+closed, the last message CLOSING LOG FILE is saved. It
+is important that in this case it is not necessary to generate
+a new key pair and therefore, the next authentication key is
+also irrelevant. To fulﬁll the data format deﬁned above, it is
+required that the log entry consists the next authentication
+key, which is set to an empty string. This message, the ﬁle
+name and location, the MAC of the entire log ﬁle, and the
+last generated key are committed to be stored in the master
+log.
+4) Content of Log Messages: In the daily log, there are
+ﬁve types of messages. In difference to the master log, which
+contains only meta information, which is only interesting for
+veriﬁcation purpose, the daily log also contains information,
+which is used in the daily use of the system. Therefore, these
+parts of the contained information of a message have to remain
+unencrypted. In the following, ’ ’ means an empty string of
+zero bytes size.
+• STARTING LOG FILE. This message only consists of
+the string, which should be encrypted.
+(m, m′) = (STARTING LOG FILE,′
+′).
+• CLOSING LOG FILE. This message only consists of
+the string, which should be encrypted.
+(m, m′) = (CLOSING LOG FILE,′
+′).
+• START APPLICATION LOG. This message contains
+the timestamp when the application log was initialized
+(this is in most cases the same timestamp, which is used
+above for saving the log ﬁle), the ﬁle name, and location
+of the application log. This information is saved in plain
+text inside the daily log because it is needed to identify
+the application logs, which are connected to the speciﬁc
+daily log.
+Furthermore, the message consists of the initialization
+key, the ﬁrst message, and the ﬁle name and location
+of the application log in encrypted form. The encryption
+step happens when the log entry is being saved to the
+daily log. The initialization key of the application log is
+saved in the daily log because the daily log is the trusted
+third party T for the application log.
+This leads to m = (START APPLICATION LOG, ini-
+tialization key, ﬁrst message, ﬁle name, location) and
+m′ = (START APPLICATION LOG, timestamp, ﬁle
+name, location).
+• STOP APPLICATION LOG. Similar to the start mes-
+sage, this message contains in plain text a timestamp, the
+ﬁle name, and the location of the application log. The
+encrypted parts, which are also encrypted when saving
+the log entry, are the last key, the last message, and the
+ﬁle name as well as the location of the application log.
+This leads to m = (STOP APPLICATION LOG, last
+key, last message, ﬁle name, location) and m′
+=
+(STOP APPLICATION LOG, timestamp, ﬁle name, lo-
+cation).
+43
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+• ROTATING APPLICATION LOG. In case of a log ro-
+tation procedure, it is necessary that the SLOPPI tool is
+able to know, which new log ﬁle was previously protected
+by the SLOPPI approach and which daily log this new log
+ﬁle is assigned to. For this reason, the message contains
+a timestamp and both ﬁle names, i. e., before and after a
+rotation, in plain text. As in the previous message type,
+there are – also for security reasons – the ﬁle names and
+locations as parts of the cipher text.
+This leads to m = (ROTATING APPLICATION LOG,
+ﬁle
+name
+before,
+ﬁle
+name
+after)
+and
+m′
+=
+(ROTATING APPLICATION LOG,
+timestamp,
+ﬁle
+name before, ﬁle name after).
+It is important that all application logs, which have their
+starting message in a daily log, have to write their stopping
+message also to the same daily log. This is the reason why
+some contents in the log ﬁle are still in plain text. Otherwise,
+the logging engine would have to remember, which application
+log is connected to which daily log. This also means that it is
+possible that a daily log is still open when the next daily log
+is initialized. The ROTATING APPLICATION LOG message
+could be in later daily logs because the speciﬁcs of the log
+rotation algorithm are not known and it could be that a log
+rotation is performed only once a week.
+D. The SLOPPI Application Log Files
+In general, the application log ﬁles La can be protected by
+any approach presented in Section III and are not a mandatory
+part of the SLOPPI architecture. These log ﬁles can also be
+deleted for compliance reasons. It is also possible to use log
+rotation techniques to fulﬁll local data protection policies.
+It is necessary to mention that any information about an
+attacker, which is not detected during this period, will be lost
+and cannot be recovered. But this is not a drawback of the
+presented framework because this is necessary to fulﬁll the
+data protection legislation especially in Europe or in Germany,
+which mandates to erase any privacy protected data after seven
+days. In scenarios where the log ﬁles can only be read after a
+longer ofﬂine period, e. g., low power sensor-networks devices,
+the period to delete log ﬁles should be set individually so an
+administrator is able to analyze any log data before they are
+deleted.
+SLOPPI’s core components ensure that the essential require-
+ments of secure logging are fulﬁlled: integrity and compliance.
+However, in high-security environments, additional character-
+istics are required, such as the conﬁdentiality of application log
+entries with selective deletion of personal data. In this section,
+we present modular extensions to the SLOPPI architecture and
+workﬂows to provide such additional functionality. Due to the
+openness of SLOPPI’s architecture, arbitrary other modules
+can also be implemented.
+1) Application Log Message Encryption: In many cases
+application log ﬁles should be in plain text to allow other
+applications or human administrators to take a look into the
+log ﬁles. However, in other cases it is appropriate to protect
+the content of the log ﬁles from prying eyes.
+In the basic SLOPPI approach, it is not required to encrypt
+the log entries in the application log ﬁles explicitly. But
+sometimes it becomes necessary that the application logs get
+encrypted. For this, SLOPPI provides an extension, which
+supports different encryption methods for the most common
+scenarios as discussed below.
+In general, any existing encryption algorithm may be used
+for securing particular application logs. So, here the encryption
+extension for SLOPPI is speciﬁed in an abstract way assuming
+an encryption method using particular, respective secrets ksign
+(encryption) and kauth (decryption) to secure a particular
+application log La. For sure, ksign = kauth if symmetric
+encryption scheme is used, which is generally recommended
+due to the amount of data that is typically logged to application
+logs.
+Based on this assumption, there are still several different
+options how to actually encrypt the respective application log
+messages. These options must be bases upon the underlying
+scenario; the most common ones are discussed in the follow-
+ing:
+• Sometimes different persons or groups are responsible for
+the administration of a system or service. As this sharing
+of responsibility mostly leads to more than one applica-
+tion logs, in which the different groups are divided, it
+is important to deﬁne, whether all application log ﬁles
+using the same key pair for encryption or different ones
+for each log ﬁle are chosen.
+• Log messages in application logs can be very critical. For
+example, in a bank it is possible that each money transfer
+is also logged into the application log to prove that the
+transfer succeeded or failed. Assume that in this case it
+is insufﬁcient if the log message is readable even for a
+short period of time. So here is the requirement that each
+log message is encrypted with a key, which is different
+from the previous message as well as from the following
+message.
+• As SLOPPI should be runnable on nearly every system, it
+is sometimes difﬁcult to generate a new randomly chosen
+key every time (especially in the case “one message, one
+key”). For this scenario, SLOPPI also supports an auto-
+derivation of the encryption key by using an appropriate
+key derivation function. This function can, for example,
+be based on Keccak or other algorithms that also support
+the generation of arbitrary-length key material.
+• In general, log ﬁle analysis should be done nearly in real
+time to detect unusual events. For this it is not necessary
+to take a look into the log ﬁle after a predeﬁned period of
+time, e. g., after the daily log rotation. If this is the case, it
+is sufﬁcient to analyze the log ﬁles, while the veriﬁcation
+process is running and so the log ﬁle encryption can
+start, for example, with a randomly chosen key pair.
+Otherwise, the veriﬁcation and the log ﬁle analysis, i. e.,
+the log ﬁle decryption, are different processes. In that
+case, the decryption key has to be deduced by applying an
+appropriate key derivation function. It is obvious that in
+this case the initial secret has to be stored on T otherwise,
+44
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+decryption would also possible for any attacker.
+The encryption extension for SLOPPI supports any com-
+bination of the described options above. Which options are
+chosen in a speciﬁc scenario depends on the characteristics
+of the application log ﬁle and environment used, e. g., the
+number of log lines per day, the speed of adding of log lines in
+maximum and in average, the computing power and memory
+resources of the system versus the conﬁdentiality in the face
+of potential attackers for a day-period.
+Even if the single key-pair option, i. e., for one or more log
+ﬁles one key per day, is chosen, a potential attacker will not be
+able to read any application log ﬁles of prior days, but he may
+be able to read the log ﬁle of the current day, as the single
+key pair is still accessible.
+In any case, all necessary information about the choices
+made has to be stored initially in the respective start applica-
+tion log message in the daily log ﬁle. Therefore, the content
+of the startup application log message has to be extended in
+comparison to basic SLOPPI:
+• m = (START APPLICATION LOG, initialization key,
+ﬁrst message, ﬁle name, location) has to be changed to
+m = (START APPLICATION LOG, initialization key,
+encryption method, initial key or derivation info, iteration
+used?, chaining used?, ﬁrst message, ﬁle name, location),
+where encryption method gives some information about
+the used encryption algorithm and also, which of the ex-
+tensions above is used. initial key or derivation info is the
+place, where the used (initial) decryption key is stored. If
+this key is computable from previous information, the key
+information is replaced by information about the used key
+derivation function. The last two optional parts iteration
+used and chaining used deﬁne information about parts of
+the extensions described above.
+• m′ = (START APPLICATION LOG, timestamp, ﬁle
+name, location) does not require any changes.
+All application log messages of the respective application
+log ﬁle have to be encrypted according to the choices made.
+Additionally, if the chaining mode was chosen, each newly
+selected decryption key for the next application log entry has
+to be concatenated with the proper message of the current
+application log entry before this concatenation is encrypted
+using the current encryption key. This leads to the following:
+• applogentryi = Ei(decryptkeyi+1; msgi) if chaining is
+used
+• applogentryi = Ei(msgi) otherwise
+2) Application Log Message Enrichment: Log messages
+sent to SLOPPI can be parsed and enriched before being stored
+in an application log ﬁle. This brings the following beneﬁts:
+• The application-speciﬁc structure of log messages can
+be made explicit, for example, by marking data ﬁelds
+containing personal data or speciﬁc error codes. This
+simpliﬁes processing SLOPPI application log ﬁles in log
+management tools or business intelligence software, such
+as Splunk.
+• Recommendations on how the content of the log message
+should be visualized can be added.
+Given log message m of length n, c1, . . . , cn denotes the
+individual characters that m is composed of. A slice is deﬁned
+as tuple ⟨ci, cj⟩ with i ≤ j and denotes the boundaries of
+an arbitrary non-empty sub-string of m. Unique names are
+assigned to slices and can be used to describe their semantics.
+For example, if a network service’s log message contains the
+IP address of a client, the resulting slice could be named
+ipaddress. The exact boundaries for each slice in any log
+message are determined by parsing rules. Typically, regular
+expressions will be used to parse a log message in order
+to determine the slice boundaries. If a parsing rule matches
+the given log message, the slice name and boundaries are
+appended to the log entry. For example, if the IPv4 address
+10.31.33.7 is detected in a log message starting at ci with
+i = 27, then the string @ipaddress:27-36 is appended to
+the log entry.
+In general, slices can be overlapping. For example, a whole
+log message may be slice-tagged as service x’s error message,
+while a sub-string may be tagged ipaddress. However, for
+the personal data anonymization procedure discussed below,
+care must be taken that the two types of used slices do
+not overlap to ensure that one slice’s hash value does not
+change when another slice is being modiﬁed. Otherwise,
+the a-posteriori anonymization of log ﬁles would break the
+veriﬁcation procedure.
+Slices are useful for two slightly different use cases: On
+the one hand, the SLOPPI tools can be instructed to verify
+and decrypt only selected slices; this allows for a ﬁne-grained
+access model where system administrators can be restricted to
+which parts of single log ﬁle entries they are allowed to read
+– this allows for a more detailed access management than the
+traditional per-ﬁle or per-log-entry model found in most of
+today’s implementations. On the other hand, slice names and
+ranges can be fed to other log entry processing tools, such as
+business intelligence software and log ﬁle visualization tools.
+This not only saves the overhead of parsing the same log
+message multiple times in different processing tools, but its
+true power lies in that the slicing can be integrity-checked.
+For example, it becomes obvious whether an IPv4 address
+has been recognized as such by looking at the slice names;
+compliance violations, such as not checking which parts of
+log messages contain personal data that must be removed
+after the maximum retention time become easy to spot for
+an auditor. Also, administrators do not need to wait until the
+maximum retention time has been reached to verify whether
+an anonymization batch run will modify the correct parts of
+the log messages.
+E. Generalized Privacy Protection for the Application Logs
+As introduced in the previous section, SLOPPI also provides
+a semantic tagging of log entries. This can be used to identify
+privacy-relevant data. With this knowledge it is possible to
+anonymize these relevant parts of the log ﬁle, while the
+remainder of the information can be stored untouched.
+45
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+In general a log message is only a string without any
+semantics for the normal logging process. Because of that
+the normal logging process is not able to differentiate privacy
+relevant data. With SLOPPI and the application log message
+enrichment extension, it is possible to give the logging process
+the needed information to separate compliance sensitive data
+from other text. As the goal is to enable the a-posteriori
+anonymization of log ﬁles, the content of each log message is
+split into two categories:
+• The part of the log, which has to be anonymized later on.
+• Everything else.
+To perform the seperation between anonymized and non-
+anonymized data, there has to deﬁned a priori the exact log
+format. For example, in the SSH (Secure Shell) log ﬁles,
+the log entries are always in a uniformed format, e. g., on
+a standard Debian web server there is always at the beginning
+a timestamp, followed by the host name, the process name
+and number and ﬁnally the log message, which contains the
+authentication method, the user name and ﬁnally the source
+IP address and the port. In this example, only the username
+and the IP address is necessary to anonymize for fulﬁlling the
+legislation boundaries. With the help of regular expressions,
+the positions of this information can be found. In other
+examples, this might be more complicated, but in general each
+logging source has its own speciﬁed output format. If there
+are to many mixed entries in a log ﬁle, there is always the
+possibility to split this log ﬁle into more than one others.
+As written above, for the protection of the application log
+any approach of Section III can be used. In the following the
+forward integrity approach is described; any other approach
+can be handled analogous.
+For the integrity protection, a MAC of each log entries
+is used. This MAC would change if an anonymization is
+performed afterwards and a veriﬁcation would be impossible.
+But with the knowledge of the relevant parts, it is possible to
+calculate two MACs. The ﬁrst is the original MAC with all
+information, while the other MAC is calculated with already
+anonymized parts of the log message.
+These two MACs are appended accordingly to the log entry.
+The veriﬁcation process can now check both MAC values. If
+no anonymization has been performed yet, the original MAC
+can be used. Otherwise, the veriﬁcation step uses the new
+MAC. For this it is important that the SLOPPI anonymization
+uses the same anonymization string every time. To ensure
+human readability, i. e., administrators should know, which
+parts of a log message have already been anonymized, a
+placeholder replacement string, such as XXX or *** should
+be used. For simple implementation, it needs to be of constant
+length; this also avoids issues regarding the de-anonymization
+success probability when using variable-length strings.
+In general it is important to know, which log entry has been
+anonymized at what time. Because an attacker could otherwise,
+anonymize any log entry himself to cover up the traces. To
+prevent this, SLOPPI generates a new log entry in the daily
+log, which contains the message LOG ANONYMIZATION and
+also the information, about which log ﬁle and which log
+entries are being anonymized, e. g., all log entries between
+the timestamps 1408010400 and 1408096800. To avoid race
+conditions, this log entry is created after an anonymization
+batch run has successfully ﬁnished.
+F. Generalized Privacy Protection for the Application Logs
+with Partial Encryption
+Both extensions of sections IV-D1 and IV-E can be com-
+bined to allow for on the one hand the partial deletion of log
+entries, e. g., to support privacy for relevant data, and on the
+other hand for partial encryption of log entries, simultaneously.
+Assumed is an partial application log ﬁle La and its application
+log messages being partitioned into different slices (i. e.,
+tagged parts):
+• Different slices of application log messages are – either
+iteratively or in chained mode – to be hashed separately
+as described in Section IV-E; this is done using multiple
+initial hash secrets, which are being stored in the respec-
+tive start application log message for the application log
+ﬁle in the daily log ﬁle.
+• Particular slices of application log messages can in addi-
+tion be iteratively encrypted similar to IV-D1, but only for
+the particular slice. Each slice is treated separately with
+different encryption methods and secrets. Therefore, the
+method identiﬁer needs to be stored along with the initial
+description key for each slice in the respective application
+log message for the application log ﬁle in the daily log
+ﬁle.
+In sum, this requires the slicing of log messages along
+with partial encryption of each slice and therefore adds some
+overhead to the application and daily log ﬁles.
+V. SLOPPI LOG ENTRY VERIFICATION PROCEDURE
+To verify log entries, the initial master key is needed. Each
+log entry in the master log is encrypted as Enckn
+sign(m∗) with
+m∗ = (timestamp, m, kn+1
+auth). To decrypt the message only
+the authentication key is needed, which is stored during the log
+ﬁle initialization step. After the ﬁrst log entry is decrypted, the
+authentication key to decrypt the second log entry is obtained
+implicitly, and so on. The ﬁrst occurrance of a log entry, which
+cannot be decrypted gives proof that a manipulation of the
+log ﬁles, which has been caused by an attacker or a malicious
+administrator who has tried to blur his traces.
+This veriﬁcation step is to verify the master log and to
+obtain the veriﬁcation keys for the daily log. As the entries
+in the daily log look like Encksym(m∗) with the content
+m∗ = (timestamp, m, knew
+sym), the ﬁrst entry could be de-
+crypted by using the symmetric key stored in the master log.
+The symmetric key for any other entries is in the message
+payload of the previous log entry. As above in the master log,
+it is not possible for an attacker to modify any log entry in
+such a way that the encryption step works correctly.
+A. Master Log: Veriﬁcation of Log Messages
+To verify an existing master log, it is necessary to use
+the authentication key saved during the generation of the
+46
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+log ﬁle. With this key it is possible to decrypt the ﬁrst
+entry, which leads to the next authentication key. This step
+can be performed until the actual last message or the literal
+CLOSING LOG FILE entry is reached. Because m consists
+of the necessary information about the daily log ﬁles, it is
+possible to verify any daily log that is still available. If a
+daily log has already been deleted, then this daily log and
+the connected application logs cannot be veriﬁed any more,
+but it is still possible to use the subsequent log entries of
+Lm. Regularly the master log ﬁle is not closed because it
+is intended that the master log runs endlessly. Therefore, the
+last timestamp has to be near the current timestamp, but the
+derivation depends on the daily log scenario.
+In the case of a failure, e. g., in the storage device, it
+is possible that writing in the master log ﬁle is interrupted
+suddenly. In this case, the last message of the master log is
+not the CLOSING LOG FILE message and probably has a
+somewhat out-dated timestamp, depending on the daily log
+scenario. In this case, veriﬁcation is only possible up until
+the last timestamp just as if the master log had been closed
+regularly and no new master log had been started.
+B. Daily Log Veriﬁcation of Log Messages
+Because of the need to detect any manipulation of Lm, it
+is necessary that e also contains a hash value of the message.
+With the knowledge of this hash value it is possible to detect,
+where the decryption process failed. To verify an existing daily
+log, it is necessary to use the authentication key saved during
+the generation of the log ﬁle. With this key it is possible
+to decrypt the ﬁrst entry, which in turn leads to the next
+authentication key. This step can be performed until the actual
+last message or the CLOSING LOG FILE entry is reached.
+Because m consists of the necessary information about the
+application log ﬁles, it is possible to verify any application
+log that is still available. If an application log has already
+been deleted, then this application log cannot be veriﬁed any
+more, but it is still possible to use the subsequent log entries
+of Ld.
+In the case of a failure, e. g., in the storage device, it
+is possible that writing in the daily log ﬁle is interrupted
+suddenly. In this case, the last message of the daily log is
+not the expected CLOSING LOG FILE message; it may also
+have an out-dated timestamp. In this case, veriﬁcation is only
+possible until the last timestamp just as the daily log has been
+closed regularly and no new daily log has been started.
+Furthermore, the transfer of the data between the daily log
+and the master log can fail. In this case the master log doesn’t
+get the information that a daily log was initialized or was
+closed. This leads to a point where the veriﬁcation process
+fails because the last secret keys are already deleted and so it
+is impossible to recover them to verify the last log entry.
+C. Application Log: Veriﬁcation of Log Messages
+The procedure for verifying application log entries heavily
+depends on the options chosen for encryption. Basically, the
+key material that is required for beginning with the veriﬁ-
+cation is part of the daily log. If the application log is not
+encrypted, the veriﬁcation is concerned only with checking the
+application log’s integrity by calculating the hash values given
+the current application log ﬁle line by line, and comparing
+the result calculated during the veriﬁcation process with the
+values stored in the log ﬁle. Any mismatch is an indicator that
+the system has been compromised after the timestamp of the
+previous entry, i. e., the one before the offending line.
+If the application log is additionally encrypted, there are
+two veriﬁcation methods. On the one hand, full veriﬁcation
+requires decrypting the application log ﬁle line by line as
+the decryption key material required for the next line is
+either based on the current line’s material (iterative mode) or
+stored encrypted in the current log entry (chaining mode). An
+application log ﬁle’s full veriﬁcation is therefore O(n) with
+n being the total number of lines in an application log ﬁle.
+Full veriﬁcation is successful when all hash values match and
+the last line decrypts to yield the end application log line.
+On the other hand, the partial, or basic, veriﬁcation omits
+any decryption steps. In other words, it just ensures that the
+integrity-protecting hash values are correct. The advantage
+of this approach is that basic veriﬁcation can be performed
+without supplying the decryption key. It therefore can be used
+with automatisms not trusted enough to be provided with the
+decryption password.
+VI. SLOPPI SECURITY ANALYSIS
+In the SLOPPI approach, the method authenticate-then-
+encrypt is used to secure for example the daily log, as the the
+message m is in a ﬁrst step authenticated by a hash function
+H and then both (m and H(m)) are encrypted. As Krawczyk
+discovered, there are some problems by using authenticate-
+then-encrypt, which makes them vulnerable against chosen
+plaintext attacks [10]. But on the other side, by choosing the
+right encryption methods (e. g., CBC (Cipher Block Chaining)
+mode or stream ciphers) also the authenticate-then-encrypt
+method is secure. This security consideration has to be taken
+into account, if the SLOPPI framework is implemented.
+Furthermore, it is possible to relinquish most of the calcu-
+lated MACs by using authenticated encryption with associated
+data cipher modes [11]. By using these cipher modes, only the
+encryption step is necessary to perform to gain encryption and
+also authentication of the messages. On the other side it has to
+be evaluated, if the performance and memory needs of these
+ciphers are comparable to traditional cryptographic schemes.
+On the one hand it is not possible for an attacker to gain
+information from the daily log or the master log as they are
+both encrypted with well-known crypto schemes. On the other
+hand it is not possible to delete any entry of the log ﬁles
+because during the veriﬁcation step, the decryption of the
+entry would fail and the manipulation would become evident.
+Furthermore, assuming proper implementation, any used key
+is removed securely from memory immediately so no attacker
+could restore it.
+47
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+The only possibility of an attacker is to be fast enough to
+gain access to the system and to shut the logging mechanism
+down before any log entry is written to the disk. This may
+eventually happen, e. g., when the attacker performs a DoS
+attack on the system before he is breaking in. However,
+implementations of the logging service of the system are
+able to prevent the system from this method of attack by
+aggregating multiple identical events before writing them to
+application log ﬁles; the same approach can be used for future
+SLOPPI implementations.
+The conﬁdentiality of log messages is related to the feasi-
+bility of unauthorized decryption. For SLOPPI, the following
+aspects need to be considered:
+• The master log ﬁle is strongly encrypted in any of the
+operational modes described above, i. e., for the iterative
+mode as well as the chaining mode, which is applied to
+each individual application log ﬁle. The master log ﬁle
+uses public/private key encryption and therefore secure
+as long as either of both keys is kept out of an attacker’s
+reach.
+• The daily log ﬁle is also strongly encrypted in any of
+the operational modes. However, it uses a symmetric
+encryption scheme, which means its security relies on
+generating high-quality random key material, which an
+attacker must never see. Generating key material, e. g.,
+by using pseudo-random number generators (PRNGs),
+typically works well on systems with good entropy pools,
+such as networked servers or interactively used machines.
+However, especially embedded systems without entropy-
+generating sensors may be bad at generating new key ma-
+terial. In this case, manually planting an unique random
+number seed that provides enough input for further key
+derivation during the system’s estimated run-time before
+system deployment is mandatory.
+• In the basic SLOPPI operating mode, only iteratively se-
+curely hashed key material is used. The initial hash secret
+is saved in the respective opening daily log message in
+the daily log. Therefore, the conﬁdentiality of the daily
+log ﬁle, which has been discussed above, is sufﬁcient to
+ensure the secrecy of this keying material.
+• When SLOPPI is used to also encrypt log messages in
+the application log ﬁles, these log ﬁles make use of the
+same iterative or chained encryption:
+– The initial decryption key km,d,1 is being stored
+along with its initial hash secret in the respective
+daily log message about opening the application log;
+the conﬁdentiality of the daily log protects this key
+material.
+– With each log entry i, i ≥ 1, in the application log,
+the entry meta-data also contains the next iteration
+of the decryption key km,d,i+1.
+When using SLOPPI with application log ﬁle encryption,
+using either iterative or chained key material generation de-
+serves further discussion. The basis for both options is the
+generation of new key material in the beginning; it depends
+on the quality of the PRNG, similar to the daily log, which
+has been discussed above. Furthermore, key material that
+is no longer needed needs to be correctly and irrevocably
+be erased from memory, i. e., after the ﬁrst log message
+iteration or after the application log ﬁle has been closed. The
+conﬁdentiality also depends on the strength and quality of the
+used key derivation algorithm and its mode of operation, e. g.,
+counter mode, feedback mode, or double-pipeline iteration
+mode. Similar to encryption, many options are available and
+SLOPPI does not prescribe, which one to use.
+If SLOPPI is used without any iteration re-keying option,
+then an attacker may be able to read plain text messages
+that are already written to the application log ﬁle before
+the attacker gained control of the system, but limited to the
+particular application log ﬁle of the current day. For any other,
+already closed application log ﬁles, i. e., those from earlier
+days, the used key material should already have been erased
+irrevocably from memory.
+If the auto-iteration SLOPPI mode is used, which is based
+on key-derivation functions to generate new key material
+during re-keying, and the proper removal of no longer needed
+key material from memory is ensured, then the attacker is
+unable to access the plain text of the written application log
+messages up until the current re-keying at the time of system
+compromise.
+Finally, if the chaining SLOPPI mode is used, i. e., new
+key material is generated for each application log entry, the
+quality of the achieved protection again is based on the quality
+of the used PRNG and proper reliable removal of outdated
+key material from memory. Attackers cannot gain access to
+previously written log entries’ plain text either. Depending on
+the cipher that is used, ideally both options only differ in the
+amount of new key material that needs to be generated.
+As the application log ﬁles can be deleted independent of
+their encryption status – which is required to fulﬁll compliance
+policies regarding retention time – without violating their
+integrity status because the actual content of the application
+log message is irrelevant for an integrity check, the mode of
+encryption does not interfere with regular SLOPPI operations.
+It must not be neglected that SLOPPI does not address the
+availability issue of log ﬁles. Attackers can remove traces of
+attacks by simply deleting log ﬁles. Although this leads to
+an alarming situation, i. e., administrators can be informed
+about missing, truncated, or integrity-violating ﬁles, SLOPPI
+does not guarantee full traceability of all logged messages.
+Other techniques, such as using write-only memory, would
+be needed as this problem is all but impossible to ﬁx in
+software realistically, given today’s operating systems and their
+potential vulnerabilities, i. e., even a write-once ﬁle system
+could be accessed in a reading fashion, e. g., after system
+reboot and re-parametrization by an attacker who gained
+administrative privileges.
+VII. CONCLUSION
+SLOPPI is a log ﬁle management framework that supports
+integrity-checking and conﬁdentiality through encryption like
+48
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+
+other approaches, but has a special focus on compliance.
+Compliance with privacy and data protection acts can, at least
+in Europe, only be achieved by limiting the retention time
+of personal data, which may also be a part of log messages
+written to log ﬁles. SLOPPI therefore supports the ﬁne-grained
+partial removal of log entries, while still ensuring the properly
+working integrity-monitoring of the other logged data. For
+example, German Internet service providers and any other
+providers of Internet-based services are obliged to remove
+personal data from log ﬁles after 7 days based on court verdicts
+that have become effective. Using the SLOPPI approach, log
+ﬁles older than the maximum personal data retention time can
+be modiﬁed to have all personal data removed, while still
+ensuring that the log ﬁle has not been tampered with otherwise.
+In this article, we have presented the inner workings and
+security analysis of SLOPPI in more detail than our previous
+work [1] and speciﬁed two extensions to the original SLOPPI
+architecture. First, we introduced the concept of slicing log
+messages and use them for semantic tagging, which can also
+be used in conjunction with external tools, such as business
+intelligence applications, for a-posteriori removal of personal
+data from log entries, and applying encryption for ﬁne-grained
+access management protecting read access to log ﬁle informa-
+tion. Second, we presented the two options of iterations and
+chaining to address re-keying for encryption application log
+ﬁles, which were not part of the original SLOPPI speciﬁcation.
+To this extent, SLOPPI has several important functional
+advantages over the previously state-of-the-art logging mecha-
+nisms. However, they come with the inherent overhead of ad-
+ditional cryptographic operations and, to a large extent, depend
+on the quality of random numbers generated for constructing
+key material, which can be a problem for low-interaction
+systems without sufﬁcient entropy-generating pools. As future
+work on SLOPPI it is therefore planned to support adaptive
+protection mechanisms that vary the strength of the used key
+material depending on the sensitivity of the data it is applied
+to. For example, stronger cryptography could be applied to
+log message slices containing personal data, while trivial log
+entries are only protected using weaker mechanisms.
+ACKNOWLEDGMENT
+Parts of this work has been funded by the German Ministry
+of Education and Research (FKZ: 16BP12309). The authors
+wish to thank the members of the Munich Network Man-
+agement (MNM) Team for helpful comments on previous
+versions of this article. The MNM-Team, directed by Prof.
+Dr. Dieter Kranzlm¨uller and Prof. Dr. Heinz-Gerd Hegering,
+is a group of researchers at Ludwig-Maximilians-Universit¨at
+M¨unchen, Technische Universit¨at M¨unchen, the Universit¨at
+der Bundeswehr M¨unchen, and the Leibniz Supercomputing
+Centre of the Bavarian Academy of Sciences and Humanities.
+REFERENCES
+[1] F. von Eye, D. Schmitz, and W. Hommel, “SLOPPI – a framework
+for
+secure
+logging
+with
+privacy
+protection
+and
+integrity,”
+in
+ICIMP
+2013,
+The
+Eighth
+International
+Conference
+on
+Internet
+Monitoring and Protection, W. Dougherty and P. Dini, Eds.
+Roma,
+Italia: IARIA, Jun. 2013, pp. 14–19. [Online]. Available: http://
+www.thinkmind.org/download.php?articleid=icimp 2013 1 30 30021
+[accessed: 2014-12-01]
+[2] W. Hommel, S. Metzger, H. Reiser, and F. von Eye, “Log ﬁle man-
+agement compliance and insider threat detection at higher education
+institutions,” in Proceedings of the EUNIS’12 congress, Oct. 2012, pp.
+33–42.
+[3] M. Hoffmann, “The SASER-SIEGFRIED project website.” [Online].
+Available: http://www.celtic-initiative.org/Projects/Celtic-Plus-Projects/
+2011/SASER/SASER-b-Siegfried/saser-b-default.asp
+[accessed:
+2014-12-01]
+[4] S. Metzger, W. Hommel, and H. Reiser, “Migration gewachsener
+Umgebungen
+auf
+ein
+zentrales,
+datenschutzorientiertes
+Log-
+Management-System,”
+in
+Informatik
+2011.
+Springer,
+2011,
+pp.
+1–6. [Online]. Available: http://www.user.tu-berlin.de/komm/CD/paper/
+030322.pdf [accessed:
+2014-12-01]
+[5] M. Bellare and B. S. Yee, “Forward integrity for secure audit logs,” De-
+partment of Computer Science and Engineering, University of California
+at San Diego, Tech. Rep., Nov. 1997.
+[6] B. Schneier and J. Kelsey, “Cryptographic support for secure logs on
+untrusted machines,” in Proceedings of the 7th conference on USENIX
+Security Symposium, vol. 7. Berkeley, CA, USA: USENIX Association,
+Jan. 1998, pp. 53–62.
+[7] J. E. Holt, “Logcrypt: forward security and public veriﬁcation for secure
+audit logs,” in ACSW Frontiers, ser. CRPIT, R. Buyya, T. Ma, R. Safavi-
+Naini, C. Steketee, and W. Susilo, Eds., vol. 54.
+Australian Computer
+Society, Jan. 2006.
+[8] D. Ma and G. Tsudik, “A new approach to secure logging,” in ACM
+Transactions on Storage, vol. 5, no. 1.
+New York, NY, USA: ACM,
+Mar. 2009, pp. 2:1–2:21.
+[9] A. A. Yavuz and P. Ning, “BAF: an efﬁcient publicly veriﬁable secure
+audit logging scheme for distributed systems,” in ACSAC, 2009, pp.
+219–228.
+[10] H. Krawczyk, “The order of encryption and authentication for protecting
+communications (or: How secure is ssl?),” in Advances in Cryptology
+CRYPTO 2001, ser. Lecture Notes in Computer Science, J. Kilian, Ed.
+Springer Berlin Heidelberg, 2001, vol. 2139, pp. 310–331.
+[11] C. S. Jutla, “Encryption modes with almost free message integrity,”
+in Advances in Cryptology EUROCRYPT 2001, ser. Lecture Notes in
+Computer Science, B. Pﬁtzmann, Ed. Springer Berlin Heidelberg, 2001,
+vol. 2045, pp. 529–544.
+49
+International Journal on Advances in Security, vol 7 no 3 & 4, year 2014, http://www.iariajournals.org/security/
+2014, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+

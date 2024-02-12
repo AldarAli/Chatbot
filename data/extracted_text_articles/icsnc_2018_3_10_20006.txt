@@ -1,0 +1,1931 @@
+Comparative Evaluation of Database Performance in an Internet of Things Context
+Denis Arnst∗, Valentin Plenk†, Adrian W¨oltche‡
+Institute of Information Systems at Hof University, Hof, Germany
+Email: ∗denis.arnst@iisys.de, †valentin.plenk@iisys.de, ‡adrian.woeltche@iisys.de
+Abstract—We use an application scenario that collects, transports
+and stores sensor data in a database. The data is gathered with
+a high frequency of 1000 datasets per second. In the context of
+this scenario, we analyze the performance of multiple popular
+database systems. The benchmark results include the load on the
+system writing the data and the system running the database.
+Keywords–performance;
+benchmark;
+nosql;
+relational;
+database; industry 4.0; mariadb; mongodb; inﬂuxdb; internet of
+things; high frequency data acquisition; time series.
+I.
+INTRODUCTION
+Recently popular media are heralding the advent of a
+new age with buzzwords like ”Internet of Things” (IoT) or
+”Industry 4.0” (I4.0). One of the popular mantras is ”data is
+the new oil”. This claim is surely true for applications like
+predictive maintenance where data gathered during operation
+of a production machine is mined for wear indicators. Many
+papers address the ”reﬁning process” (e.g. [1]–[3]) and propose
+data-mining algorithms that extract said indicators from a
+database or a data lake.
+In this paper, however, we focus on collecting and storing
+time series data as integral part of the industrial data analytics
+process [4]. This can be very challenging both in terms of
+engineering the instrumentation and in implementing fast data-
+acquisition and data-handling software. In one of our research
+projects, we collect and store ≈ 4 GB
+day.
+Standard databases can be tuned towards high performance
+reading or writing of data, but often not towards both at once.
+Especially when a fast retrieval of time series data is of interest,
+for example in predictive analytics, relational databases rely
+on B-tree indexes that permit a fast search for data. These
+indexes are a huge performance bottleneck if frequent updates
+are made. This stems from B-trees being optimized for random
+ﬁlls and not for updates only coming from one side of the
+tree. [5] propose structures like the B(x)-tree to overcome this
+problem. Nevertheless, standard databases do not implement
+specialized index structures in most cases. Instead, specialized
+”time-series” databases for this use case exists (e.g. [6]–[9]).
+To verify whether these databases are more suitable for
+our application, we use the benchmark scenario presented in
+Section II that generates a standard load on all subsystems
+of the setup, to compare relational, NoSQL and specialized
+time-series databases. Section III presents our test candidates.
+In Section IV, we describe the different implementations
+we developed for writing to the databases. We evaluated
+several ideas from [10], such as time series grouping.
+To evaluate the database performance we measure the load
+on the involved infrastructural components, i.e., CPU, memory,
+network and hard disk, and perform the benchmarking, as
+described in Section V. Section VI discusses our ﬁndings.
+Section VII summarizes the paper and gives a brief outlook
+on our future work.
+Figure 1.
+The test setup
+II.
+BENCHMARK APPLICATION
+One of our currrent projects is using predictive maintenance
+for analyzing data stemming from a complex tool operating
+within an industrial machine. The tool is equipped with 13
+analog and 37 digital sensors recording mechanical parameters
+during operation of the tool. The machine tool opens and closes
+the tool ≈ 3 times per second, i.e., 3 working cycles per
+second. Our application records ≈ 300 samples per cycle from
+the sensors and stores them in a database for later analysis.
+For the tests in this paper, we substitute tool and machine
+tool with electronic function generators as shown in Figure
+1. One function generator is set to make a sinus wave. It is
+wired to a divider circuit, which accepts one input and divides
+it into four outputs of different amplitudes. The other generator
+creates a sawtooth wave. The resulting ﬁve analog outputs are
+wired to GPIO-Inputs of a STM32F4-Discovery board.
+In total, we sample 5 analog channels with a resolution
+of 12 Bit (represented using 2 bytes) and a sample rate of
+1000 samples
+sec
+. This corresponds to a data rate of 10, 000 bytes
+sec .
+Figure 2 shows the ﬂow of the data through our setup. The
+sensor data is gathered by a microcontroller which sends it
+to a single board computer via a parallel interface. The single
+board computer is running two separate applications: one reads
+from the parallel interface and adds a timestamp to the sensor
+data. The second application receives the data and writes it
+to the database on our server. These applications are linked
+via a Linux message queue. If the second application is not
+reading fast enough to keep the buffered data in the queue
+below ≈ 16kByte data is lost.
+We use a STM32F407 on a STM32F4Discovery evaluation
+board to convert the sensor data from analog to digital. The
+45
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-669-9
+ICSNC 2018 : The Thirteenth International Conference on Systems and Networks Communications
+
+Figure 2.
+Block diagram of the test setup
+embedded application is written in C and does not use any
+operating system.
+The Single-board-Computer is a Banana Pi M3 running
+the Linux distribution CentOS 7 without an X.Org-Server.
+This system uses an ARM Cortex A7 Octa-Core with 2 GB
+RAM and has GigaBit Ethernet on board. The two applications
+running on this system are written in C and C++.
+The database is run on a dedicated server running Linux
+with an AMD Phenom(tm) II X6 1055T Processor, 16GB
+RAM (4 x 4GB, DDR3, 1333 MHz) and a 128GB SSD running
+on a ASRock 880G Extreme 3 mainboard. It also runs CentOS
+7 as distribution.
+Banana Pi and server are linked via fast ethernet.
+The parts of Figure 2 shown with gray background are
+database speciﬁc. We use high-level libraries to access the
+database and provide three different implementations and
+server installations.
+III.
+CHOICE OF DATABASES
+Various publications like [7] or [11] list an huge num-
+ber of different databases. They distinguish three categories:
+Relational Database Management Systems (RDBMS), NoSQL
+Database Management Systems (DBMS), and the more spe-
+cialized Time Series Databases (TSDB). For our benchmark,
+we chose one system for each category. For the selection
+we focus on mature (stable releases available for at least 3
+years) and free software with options for enterprise support.
+We mainly consulted the database ranking website [11] as basis
+for selecting databases for our comparison.
+As a representative RDBMS we selected the open source
+database MariaDB [12]. It is a fork of the popular MySQL
+database and widely used in Web-Applications and relational
+scenarios. [13] lists MySQL and its more recent fork MariaDB
+combined as top RDBMS.
+We selected MongoDB [14] as a DBMS advertised ex-
+pressly for its usefulness in an IoT context with a lot of sensor
+data. It is also the most promising document store [15].
+As TSDB we chose InﬂuxDB [16] which claims to be
+highly specialized in sensor data. This claim is conﬁrmed by
+the score in [17].
+IV.
+THE DIFFERENT IMPLEMENTATIONS
+Every millisecond the Database Writer application running
+on the single-board computer receives a new datapoint. Listing
+1 shows the structure of the datapoint: It contains a timestamp
+and a set of ﬁve analog values. The timestamp has a resolution
+of one nanosecond and uses 12 bytes of memory. The analog
+values are represented as 16-bit integers. Thus one datapoint
+uses 22 bytes of memory.
+Depending on the architecture of the database, we im-
+plemented different ways of storing the data detailed in the
+following sections. Each implementation itself is optimized
+concerning runtime complexity for reduced inﬂuence on the
+benchmarks by using memory usage techniques (i.e. stack
+memory allocation), database speciﬁc techniques (i.e. prepared
+statements), and general algorithmic design principles. This
+way, we are able to receive optimal database performance
+results. It is, however, possible, that non-optimized client
+implementations negatively impact the throughput. This is not
+covered by this paper for now.
+A. MariaDB – Individual datapoints
+This is a straightforward maybe even naive implementation
+of the data structure. We sequentially store each datapoint
+in the database. This results in a high rate of operations on
+the database (5000 writes
+second). Table I shows the structure of the
+data. A compound index is set on second and nanosecond.
+number describes the index of the sensor, measurement the
+corresponding sensor value.
+TABLE I
+MARIADB - TABLE STRUCTURE OF INDIVIDUAL DATAPOINTS
+Field
+Type
+second
+bigint(20)
+nanosecond
+int(11)
+number
+smallint(5) unsigned
+measurement
+smallint(5) unsigned
+Our
+implementation
+of
+the
+algorithm
+based
+on
+libmariadb
+uses
+prepared
+statements
+and
+struct
+data
+binding
+for
+higher
+performance.
+Our
+performance
+optimizations because of the creation of tables and the
+explicit transaction preparation and commitment make the
+MariaDB code the largest and most complicated of all our
+implementations.
+B. MariaDB – Bulk Datapoints
+This implementation collects all data from one machine
+cycle at once (in our test scenario: one cycle per second)
+Listing 1.
+One datapoint
+1 struct data_point
+2 {
+3
+int64_t s;
+4
+int32_t ns;
+5
+uint16_t measurements[5];
+6 };
+46
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-669-9
+ICSNC 2018 : The Thirteenth International Conference on Systems and Networks Communications
+
+and writes out one row per cycle. Therefore, we can store
+the data in bigger units, which reduces the load dramatically.
+In MariaDB, the JSON ﬁeld is an alias for longtext ﬁeld. Yet,
+the specialized JSON query commands in MariaDB work for
+such ﬁelds, which allows to later query the denormalized data
+saved. Table II shows the used structure. second is an index,
+measurements contains a JSON document built according to
+the example in Listing 2. The document contains the measure-
+ments and its time in nanoseconds in relation to the second of
+the table. Thus, the rate of index updates is reduced to 1 per
+second.
+TABLE II
+MARIADB - TABLE STRUCTURE OF DATAPOINTS IN BULK
+Field
+Type
+second
+bigint(20)
+size
+int(10) unsigned
+measurements
+json
+Listing 2.
+MariaDB - JSON Documents
+1
+{
+2
+"measurements": [
+3
+{"ns":346851124,"m":[389,792,1202,315,552]}
+4
+,{"ns":346933204,"m":[516,794,634,317,559]}
+5
+...
+6
+]}
+The difﬁculty of this adaption is similar to the original
+”naive” approach , but in one detail even more complicated: As
+it is theoretically impossible to know how many measurements
+one cycle will have (most of the time the stated 5000 measure-
+ments per second in our case, but this is not guaranteed), we
+needed to implement a dynamically growing character ﬁeld for
+the JSON data. We also needed to change the struct binding in
+the transaction commitment for honoring the dynamical length
+of the JSON data.
+C. MongoDB – Individual Datapoints
+As a document-orientated database, MongoDB allows for
+ﬂexible schemata. Data is organized internally in BSON
+(Binary JSON) documents, which are in turn grouped in
+collections.
+Saving the individual datapoints according to Listing 1
+each measurement would be a document with the time of
+measurement and the values organized as a JSON-array.
+The database supports setting an index on a ﬁeld of
+a document. To support further searching of measurements,
+an index is set on time. With such a structure, numerous
+documents are created per second. After each document, the
+index needs to be updated, which results in high computational
+effort.
+The software for the MongoDB Database Writer is writ-
+ten in C++ and uses mongocxx in conjunction with the
+bsoncxx library. The document orientated approach of Mon-
+goDB makes designing data structures very ﬂexible. However,
+the freedom leads to more work on the initial programming
+approach. Also the need to link two libraries creates additional
+effort.
+D. MongoDB – Bulk Datapoints
+As stated in Section IV-B we can store a bigger number of
+datapoints at once. In MongoDB, we can implement this with
+the structure shown in Listing 3.
+Listing 3.
+Datapoints in bulk
+1
+{
+2
+"time" : ISODate("2018-02-12T19:56:49Z"),
+3
+"measurements" : [
+4
+{ "time" : ISODate("2018-02-12T19:56:49.13
+5Z"), "sensors" : [ 0, 0, 0, 9, 347 ] }
+,
+5
+{ "time" : ISODate("2018-02-12T19:56:49.13
+6Z"), "sensors" : [ 0, 2, 4, 10, 351 ]
+},
+6
+...
+7
+]
+8
+}
+The time value of the top-level document has a precision of
+a second. This document holds all datapoints sampled during
+this second in an array. Every nested document contains the
+exact time of its measurement and the actual sensor-values.
+With this approach, the index has to be updated only once per
+second resulting in optimized write performance. Nevertheless,
+it must be considered that in this case only a whole second but
+no parts of it can be retrieved efﬁciently. However, because of
+the high increase in write throughput, we accept this drawback.
+The application creates a document for a whole second
+and ﬁlls it until the second has passed. Accordingly one such
+document is inserted per second.
+The documentation for MongoDB provides examples for
+the use of streams and basic builders consisting of function
+calls. Yet the use of nested structures and the nature of C++-
+streams is poorly documented in the doxygen-based manuals,
+increasing the implementation effort.
+E. InﬂuxDB
+As a time-series database InﬂuxDB has a strict schema
+design. Every series of data consists of points. Each point has a
+timestamp, the name of the measurement, an optional tag, and
+one or more key-values ﬁelds. Timestamps have an accuracy
+of up to one nanosecond and are indexed. The name of the
+measurement should describe the data stored. The optional tags
+are also indexed and used for grouping data. Data is retrieved
+with InﬂuxQL, a SQL-like query language. Data is written
+using the InﬂuxDB line-protocol (Listing 4). The ﬁrst string
+is the name of the measurement, here simply measurement.
+Subsequently following the key-values with ﬁve measurements
+and ﬁnally a timestamp in nanosecond precision.
+Listing 4.
+InﬂuxDB Line-Protocol example
+1
+measurement m0=0, m1=0, m2=0, m3=9, m4=347
+1518465409001000000
+The Database Writer for InﬂuxDB is written in C. The
+default API for InﬂuxDB is HTTP. For our high-frequency
+write access however, we haven chosen the UDP protocol
+which is also supported. In this case, the data is composed into
+a line-protocol with simple C-String functions and sent with
+47
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-669-9
+ICSNC 2018 : The Thirteenth International Conference on Systems and Networks Communications
+
+the Unix function sendto. Since no external code is required
+and a custom design of the data structure is not possible, using
+the database is straight-forward and fast to implement.
+Additionally, InﬂuxDB also offers built-in functions to
+process data statistically and a client library is not necessary,
+which is a beneﬁt for software developers using it.
+The choice of UDP has the probability of data loss, which
+is acceptable in our use case. For enabling the UDP service
+of InﬂuxDB, the OS was conﬁgured correspondingly to the
+information provided by InﬂuxData [18].
+V.
+TESTING
+Most applications in our context face limitations in terms
+of computing power and network bandwidth. Consequently we
+measure the load on the single board computer, the load on
+the server and the network load.
+The system load on both computers is measured in terms
+of CPU and memory usage. We created a script, which runs
+the speciﬁed application for one hour. Before it ends the
+application, it uses two Linux-System commands to gather the
+following parameters.
+LCP U indicates the processor usage. We obtain this value
+with the Linux command ps -p <pid>
+-o %cpu which
+will return a measure for the percentage of time the process
+<pid> spent running over the measurement time.
+The maximum value for one core is always 100%. On
+our 8 core single-board computer the absolute maximum value
+would be LCP U = 800%. On the server the absolute maximum
+value is 600%.
+Lmem
+indicates
+memory
+usage
+in
+kByte.
+We
+use
+the amount of memory used by the process <pid> as
+the sum of active and paged memory as returned by
+the command ps aux -y | awk ’{if ($2 == <pid>
+) print $6}’. It outputs the resident set size (RSS) mem-
+ory, the actual memory used which is held in RAM.
+Ldisk shows the the amount of disk used by a database. To
+determine this parameter we ﬁrst empty the respective database
+completely by removing its data folder. Also, we start the
+database and measure the disk space of the folder before we
+test. After the test we measure the used disk space again and
+use the difference as result. du -sh <foldername> is used to
+get the disk consumption of the respective data folder. To put
+the results in perspective: Our benchmark application gathers
+and transmits ≈ 53MByte of raw data during the one hour of
+our test.
+LIO shows the average disk input output in
+kb
+s
+caused
+by the database writing operation. This was measured via
+pidstat command.
+Lnet shows the average bandwidth used. We obtain that
+value with the command nload. We run our test in the uni-
+versity network and therefore have additional external network
+load. However before each test, we observed the additional
+network load and as it was always smaller than 1 kbytes
+sec , we
+neglected it.
+To put LIO and Lnet in perspective: In our benchmark we
+transfer 10.000 bytes
+sec
+from the microcontroller to the single-
+board computer.
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ≈ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VI.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criterion.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests.
+RAM usage of the InﬂuxDB components were the lowest.
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the disk
+was signiﬁcantly higher when using MariaDB compared to the
+others. InﬂuxDB and the bulk implementation of MongoDB
+got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step, before we add them up, we
+assign each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter,
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD,
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+Lastly we take the subjective difﬁculty of our implementa-
+tions into account. We grade on a scale from 5, most difﬁcult
+to 1 easy and weigh this parameter with 0.2. The individual
+rating is determined by the explained experience with the client
+implementation described in Section IV.
+The weights are multiplied with each criterion and ag-
+gregated, resulting in points. High point values indicate high
+resource usage according to weighting. For scoring we ”invert”
+the points with the formula
+Score = max(Points) − Points
+and normalize the scores relative to the maximum score.
+Figure 4 shows the scores without aggregation, where the
+components forming the ﬁnal results are outlined. For the ﬁnal
+ranking shown in Table III we aggregated all scores by adding
+the non normalized values.
+48
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-669-9
+ICSNC 2018 : The Thirteenth International Conference on Systems and Networks Communications
+
+TABLE III
+SCORED RANKING
+Implementation
+Rank
+Score
+MariaDB – bulk
+1
+73
+MongoDB – bulk
+2
+70
+InﬂuxDB
+3
+64
+MongoDB – individual
+4
+54
+MariaDB – individual
+5
+3
+VII.
+CONCLUSION AND FUTURE WORK
+Generally speaking, MongoDB is a good choice. Due to
+the open structure, additional information can also be stored if
+required and it performs quite well on both implementations.
+However, the optimized MariaDB implementation that
+saves data in bulks ranks ﬁrst, as it consumed the least amount
+of CPU and network.
+On the contrary, if a saving of individual values is desired,
+MariaDB is the last one and InﬂuxDB is the best in this case.
+Our ranking is weighted after the use case described in
+Section II. When IO is much more important than CPU,
+MariaDB is potentially lesser ranked, as it had the most IO
+usage in both implementations.
+The paper only covered the writing of databases. Later on,
+we want to measure the reading and querying performance in
+another paper. By ensuring that each database uses an index
+for time, we have already established a good basis for it.
+Nevertheless, we expect different winners in each test category
+for the readings.
+REFERENCES
+[1]
+D. Wang, J. Liu, and R. Srinivasan, “Data-driven soft sensor approach
+for quality prediction in a reﬁning process,” IEEE Transactions on
+Industrial Informatics, vol. 6, no. 1, Feb 2010, pp. 11–17, URL:
+https://dx.doi.org/10.1109/TII.2009.2025124 [retrieved: 2018-08-14].
+[2]
+G. K¨oksal, ˙I. Batmaz, and M. C. Testik, “A review of data mining appli-
+cations for quality improvement in manufacturing industry,” Expert Sys-
+tems with Applications, vol. 38, no. 10, 2011, pp. 13 448 – 13 467, URL:
+http://www.sciencedirect.com/science/article/pii/S0957417411005793
+[retrieved: 2018-08-14].
+[3]
+F. Chen, P. Deng, J. Wan, D. Zhang, A. V. Vasilakos, and X. Rong, “Data
+mining for the internet of things: Literature review and challenges,”
+International Journal of Distributed Sensor Networks, vol. 11, no. 8,
+2015, p. 431047, URL: https://doi.org/10.1155/2015/431047 [retrieved:
+2018-08-14].
+[4]
+J. Lee, H. D. Ardakani, S. Yang, and B. Bagheri, “Industrial big data
+analytics and cyber-physical systems for future maintenance & service
+innovation,” Procedia CIRP, vol. 38, 2015, pp. 3 – 7, proceedings of
+the 4th International Conference on Through-life Engineering Services.
+[5]
+C. S. Jensen, D. Lin, and B. C. Ooi, “Query and update efﬁ-
+cient b+-tree based indexing of moving objects,” in Proceedings of
+the Thirtieth International Conference on Very Large Data Bases
+- Volume 30, ser. VLDB ’04.
+VLDB Endowment, 2004, pp.
+768–779, URL: http://dl.acm.org/citation.cfm?id=1316689.1316756 [re-
+trieved: 2018-08-14].
+[6]
+S.
+Acreman,
+“Top
+10
+time
+series
+databases,”
+URL:
+https://blog.outlyer.com/top10-open-source-time-series-databases
+[retrieved: 2018-08-14].
+[7]
+A. Bader, O. Kopp, and M. Falkenthal, “Survey and Comparison of
+Open Source Time Series Databases,” Datenbanksysteme f¨ur Busi-
+ness, Technologie und Web - Workshopband, 2017, pp. 249 – 268,
+URL: http://btw2017.informatik.uni-stuttgart.de/slidesandpapers/E4-14-
+109/paper web.pdf [retrieved: 2018-08-14].
+[8]
+D. Namiot, “Time series databases,” in DAMDID/RCDL, 2015,
+URL:
+https://www.semanticscholar.org/paper/Time-Series-Databases-
+Namiot/bf265b6ee45d814b3acb29fb52b57fd8dbf94ab6
+[retrieved:
+2018-08-14].
+[9]
+S. Y. Syeda Noor Zehra Naqvi, “Time series databases and in-
+ﬂuxdb,” Studienarbeit, Universit´e Libre de Bruxelles, 2017, URL:
+http://cs.ulb.ac.be/public/ media/teaching/inﬂuxdb 2017.pdf [retrieved:
+2018-08-14].
+[10]
+A. M. Castillejos, “Management of time series data,” Dissertation,
+School
+of
+Information
+Sciences
+and
+Engineering,
+2006,
+URL:
+http://www.canberra.edu.au/researchrepository/ﬁle/82315cf7-7446-fcf2-
+6115-b94fbd7599c6/1/full text.pdf [retrieved: 2018-08-14].
+[11]
+solidIT consulting & software development gmbh, “DB-Engines Rank-
+ing,” URL: https://db-engines.com/en/ranking [retrieved: 2018-08-14].
+[12]
+“MariaDB homepage,” URL: https://mariadb.org/ [retrieved: 2018-08-
+14].
+[13]
+solidIT
+consulting
+&
+software
+development
+gmbh,
+“DB-
+Engines
+Ranking
+of
+Relational
+DBMS,”
+URL:
+https://db-
+engines.com/en/ranking/relational+dbms [retrieved: 2018-08-14].
+[14]
+“MongoDB
+homepage,”
+URL:
+https://www.mongodb.com/what-is-
+mongodb [retrieved: 2018-08-14].
+[15]
+solidIT
+consulting
+&
+software
+development
+gmbh,
+“DB-
+Engines
+Ranking
+of
+Document
+Stores,”
+URL:
+https://db-
+engines.com/en/ranking/document+store [retrieved: 2018-08-14].
+[16]
+“InﬂuxDB homepage,” URL: https://www.inﬂuxdata.com/time-series-
+platform/inﬂuxdb/ [retrieved: 2018-08-14].
+[17]
+solidIT
+consulting
+&
+software
+development
+gmbh,
+“DB-
+Engines
+Ranking
+of
+Time
+Series
+DBMS,”
+URL:
+https://db-
+engines.com/en/ranking/time+series+dbms [retrieved: 2018-08-14].
+[18]
+“UDP
+Conﬁguration
+of
+InﬂuxDB,”
+URL:
+https://github.com/inﬂuxdata/inﬂuxdb/tree/master/services/udp
+[retrieved: 2018-08-14].
+TABLE IV
+TEST RESULTS
+LCP US
+LmemS
+LCP UC
+LmemC
+Lio
+Ldisk
+Lnet
+Difﬁculty
+MariaDB – individual
+36.6 %
+201 kB
+7 %
+7.8 kB
+7396 kB/s
+1.27 GB
+1.41 Mbit/s
+5 (Very high)
+MariaDB – bulk
+0.6 %
+172 kB
+2.2 %
+8 kB
+378 kB/s
+240 MB
+0.37 Mbit/s
+MongoDB – individual
+3 %
+758 kB
+6.6 %
+12 kB
+117 kB/s
+204 MB
+0.78 Mbit/s
+4 (high)
+MongoDB – bulk
+1 %
+209 kB
+3 %
+12 kB
+56 kB/s
+86 MB
+0.63 Mbit/s
+InﬂuxDB
+15.4 %
+178 kB
+4.9 %
+2 kB
+81 kB/s
+89 MB
+0.87 Mbit/s
+1 (Very low)
+Weight
+2
+0.25
+2.5
+0.25
+2.5
+0.5
+1.5
+0.2
+49
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-669-9
+ICSNC 2018 : The Thirteenth International Conference on Systems and Networks Communications
+
+0%
+10%
+20%
+30%
+40%
+50%
+60%
+70%
+80%
+90%
+100%
+CPU_Server
+RAM_Server
+IO_Server
+CPU_Client
+RAM_Client
+Netzwerk (inc, mBit/s)
+Festplatte (M)
+MariaDB_Single
+MariaDB_Bulk
+MongoDB_Single
+MongoDB_Bulk
+InfluxDB
+required and
+le, using the
+t.
+unctions to
+t absolutely
+ers using it.
+loss, which
+UDP service
+ingly to the
+ons in terms
+equently we
+the load on
+ed in terms
+which runs
+it ends the
+o gather the
+n this value
+cpu which
+the process
+100%. On
+imum value
+e maximum
+e.
+We
+use
+<pid> as
+eturned by
+== <pid>
+RSS) mem-
+M.
+database. To
+ive database
+we start the
+r before we
+e again and
+> is used to
+lder. To put
+tion gathers
+one hour of
+obtain that
+number in
+0 bytes
+sec
+from
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VII.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criteria.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests.
+The RAM usage of the InﬂuxDB components were the lowest.
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the
+disk was signiﬁcantly higher when using MariaDB compared
+to the others. The InﬂuxDB and the bulk implementation of
+MongoDB got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step before we add them up we assign
+each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter,
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD,
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+Unix function sendto. Since no external code is required and
+a custom design of the data structure is not possible, using the
+database is straight-forward and fast to implement.
+Additionally, InﬂuxDB also offers built-in functions to
+process data statistically and a client library is not absolutely
+necessary, which is a beneﬁt for software developers using it.
+The choice of UDP has the probability of data loss, which
+is acceptable in our use case. For enabling the UDP service
+of InﬂuxDB, the OS was conﬁgured correspondingly to the
+information provided by InﬂuxData.4
+V.
+TEST CRITERIA
+Most applications in our context face limitations in terms
+of computing power and network bandwidth. Consequently we
+measure the load on the single board computer, the load on
+the server and the network load.
+The CPU load on both computers is measured in terms
+of CPU and memory usage. We created a script, which runs
+the speciﬁed application for one hour. Before it ends the
+application, it uses two Linux-System commands to gather the
+following parameters.
+LCP U indicates the processor usage. We obtain this value
+with the Linux command ps -p <pid>
+-o %cpu which
+will return a measure for the percentage of time the process
+<pid> spent running over the measurement time.
+The maximum value for one core is always 100%. On
+our 8 core single-board computer the absolute maximum value
+would be LCP U = 800%. On the server the absolute maximum
+value is 600%.
+Lmem
+indicates
+memory
+usage
+in
+kByte.
+We
+use
+the amount of memory used by the process <pid> as
+the sum of active and paged memory as returned by
+the command ps aux -y | awk ’{if ($2 == <pid>
+) print $6}’. It outputs the resident set size (RSS) mem-
+ory, the actual memory used which is held in RAM.
+Ldisk shows the the amount of disk used by a database. To
+determine this parameter we ﬁrst empty the respective database
+completely by removing its data folder. Also we start the
+database and measure the disk space of the folder before we
+test. After the test we measure the used disk space again and
+use the difference as result. du -sh <foldername> is used to
+get the disk consumption of the respective data folder. To put
+the results in perspective: Our benchmark application gathers
+and transmits ⇡ 53MByte of raw data during the one hour of
+our test.
+LIO shows ...
+TODO
+Plenk:
+Beschreiben
+Lnet shows the average bandwidth used. We obtain that
+value with the command nload. To put that number in
+perspective: In our benchmark we transfer 10.000 bytes
+sec
+from
+h
+i
+ll
+h
+i
+l b
+d
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VII.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criteria.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests.
+The RAM usage of the InﬂuxDB components were the lowest.
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the
+disk was signiﬁcantly higher when using MariaDB compared
+to the others. The InﬂuxDB and the bulk implementation of
+MongoDB got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step before we add them up we assign
+each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter,
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD,
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+nce no external code is required and
+structure is not possible, using the
+d and fast to implement.
+also offers built-in functions to
+nd a client library is not absolutely
+ﬁt for software developers using it.
+the probability of data loss, which
+ase. For enabling the UDP service
+conﬁgured correspondingly to the
+ﬂuxData.4
+EST CRITERIA
+ur context face limitations in terms
+twork bandwidth. Consequently we
+ingle board computer, the load on
+load.
+h computers is measured in terms
+e. We created a script, which runs
+for one hour. Before it ends the
+ux-System commands to gather the
+cessor usage. We obtain this value
+ps -p <pid>
+-o %cpu which
+the percentage of time the process
+the measurement time.
+or one core is always 100%. On
+mputer the absolute maximum value
+On the server the absolute maximum
+mory
+usage
+in
+kByte.
+We
+use
+used by the process <pid> as
+paged memory as returned by
+y | awk ’{if ($2 == <pid>
+ts the resident set size (RSS) mem-
+d which is held in RAM.
+ount of disk used by a database. To
+e ﬁrst empty the respective database
+ts data folder. Also we start the
+disk space of the folder before we
+sure the used disk space again and
+du -sh <foldername> is used to
+f the respective data folder. To put
+Our benchmark application gathers
+of raw data during the one hour of
+e bandwidth used. We obtain that
+nload. To put that number in
+mark we transfer 10.000 bytes
+sec
+from
+single-board computer.
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VII.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criteria.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests.
+The RAM usage of the InﬂuxDB components were the lowest.
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the
+disk was signiﬁcantly higher when using MariaDB compared
+to the others. The InﬂuxDB and the bulk implementation of
+MongoDB got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step before we add them up we assign
+each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter,
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD,
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+Lastly we take the subjective difﬁculty of our implementa-
+i
+i
+W
+d
+l f
+5
+difﬁ
+l
+Unix function sendto. Since no external code is required and
+a custom design of the data structure is not possible, using the
+database is straight-forward and fast to implement.
+Additionally, InﬂuxDB also offers built-in functions to
+process data statistically and a client library is not absolutely
+necessary, which is a beneﬁt for software developers using it.
+The choice of UDP has the probability of data loss, which
+is acceptable in our use case. For enabling the UDP service
+of InﬂuxDB, the OS was conﬁgured correspondingly to the
+information provided by InﬂuxData.4
+V.
+TEST CRITERIA
+Most applications in our context face limitations in terms
+of computing power and network bandwidth. Consequently we
+measure the load on the single board computer, the load on
+the server and the network load.
+The CPU load on both computers is measured in terms
+of CPU and memory usage. We created a script, which runs
+the speciﬁed application for one hour. Before it ends the
+application, it uses two Linux-System commands to gather the
+following parameters.
+LCP U indicates the processor usage. We obtain this value
+with the Linux command ps -p <pid>
+-o %cpu which
+will return a measure for the percentage of time the process
+<pid> spent running over the measurement time.
+The maximum value for one core is always 100%. On
+our 8 core single-board computer the absolute maximum value
+would be LCP U = 800%. On the server the absolute maximum
+value is 600%.
+Lmem
+indicates
+memory
+usage
+in
+kByte.
+We
+use
+the amount of memory used by the process <pid> as
+the sum of active and paged memory as returned by
+the command ps aux -y | awk ’{if ($2 == <pid>
+) print $6}’. It outputs the resident set size (RSS) mem-
+ory, the actual memory used which is held in RAM.
+Ldisk shows the the amount of disk used by a database. To
+determine this parameter we ﬁrst empty the respective database
+completely by removing its data folder. Also we start the
+database and measure the disk space of the folder before we
+test. After the test we measure the used disk space again and
+use the difference as result. du -sh <foldername> is used to
+get the disk consumption of the respective data folder. To put
+the results in perspective: Our benchmark application gathers
+and transmits ⇡ 53MByte of raw data during the one hour of
+our test.
+LIO shows ...
+TODO
+Plenk:
+Beschreiben
+Lnet shows the average bandwidth used. We obtain that
+value with the command nload. To put that number in
+perspective: In our benchmark we transfer 10.000 bytes
+sec
+from
+the microcontroller to the single-board computer.
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VII.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criteria.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests.
+The RAM usage of the InﬂuxDB components were the lowest.
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the
+disk was signiﬁcantly higher when using MariaDB compared
+to the others. The InﬂuxDB and the bulk implementation of
+MongoDB got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step before we add them up we assign
+each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter,
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD,
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+Lastly we take the subjective difﬁculty of our implementa-
+Unix function sendto. Since no external code is required and
+a custom design of the data structure is not possible, using the
+database is straight-forward and fast to implement.
+Additionally, InﬂuxDB also offers built-in functions to
+process data statistically and a client library is not absolutely
+necessary, which is a beneﬁt for software developers using it.
+The choice of UDP has the probability of data loss, which
+is acceptable in our use case. For enabling the UDP service
+of InﬂuxDB, the OS was conﬁgured correspondingly to the
+information provided by InﬂuxData.4
+V.
+TEST CRITERIA
+Most applications in our context face limitations in terms
+of computing power and network bandwidth. Consequently we
+measure the load on the single board computer, the load on
+the server and the network load.
+The CPU load on both computers is measured in terms
+of CPU and memory usage. We created a script, which runs
+the speciﬁed application for one hour. Before it ends the
+application, it uses two Linux-System commands to gather the
+following parameters.
+LCP U indicates the processor usage. We obtain this value
+with the Linux command ps -p <pid>
+-o %cpu which
+will return a measure for the percentage of time the process
+<pid> spent running over the measurement time.
+The maximum value for one core is always 100%. On
+our 8 core single-board computer the absolute maximum value
+would be LCP U = 800%. On the server the absolute maximum
+value is 600%.
+Lmem
+indicates
+memory
+usage
+in
+kByte.
+We
+use
+the amount of memory used by the process <pid> as
+the sum of active and paged memory as returned by
+the command ps aux -y | awk ’{if ($2 == <pid>
+) print $6}’. It outputs the resident set size (RSS) mem-
+ory, the actual memory used which is held in RAM.
+Ldisk shows the the amount of disk used by a database. To
+determine this parameter we ﬁrst empty the respective database
+completely by removing its data folder. Also we start the
+database and measure the disk space of the folder before we
+test. After the test we measure the used disk space again and
+use the difference as result. du -sh <foldername> is used to
+get the disk consumption of the respective data folder. To put
+the results in perspective: Our benchmark application gathers
+and transmits ⇡ 53MByte of raw data during the one hour of
+our test.
+LIO shows ...
+TODO
+Plenk:
+Beschreiben
+Lnet shows the average bandwidth used. We obtain that
+value with the command nload. To put that number in
+perspective: In our benchmark we transfer 10.000 bytes
+sec
+from
+the microcontroller to the single-board computer.
+We run our test in the university network and therefore
+h
+dditi
+l
+t
+l
+t
+k l
+d H
+b f
+h
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VII.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criteria.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests.
+The RAM usage of the InﬂuxDB components were the lowest.
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the
+disk was signiﬁcantly higher when using MariaDB compared
+to the others. The InﬂuxDB and the bulk implementation of
+MongoDB got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step before we add them up we assign
+each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter,
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD,
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+Lastly we take the subjective difﬁculty of our implementa-
+tions into account. We grade on a scale from 5, most difﬁcult
+t
+1
+d
+i h thi
+t
+ith 0 2 Th
+i di id
+l
+Unix function sendto. Since no external code is required and
+a custom design of the data structure is not possible, using the
+database is straight-forward and fast to implement.
+Additionally, InﬂuxDB also offers built-in functions to
+process data statistically and a client library is not absolutely
+necessary, which is a beneﬁt for software developers using it.
+The choice of UDP has the probability of data loss, which
+is acceptable in our use case. For enabling the UDP service
+of InﬂuxDB, the OS was conﬁgured correspondingly to the
+information provided by InﬂuxData.4
+V.
+TEST CRITERIA
+Most applications in our context face limitations in terms
+of computing power and network bandwidth. Consequently we
+measure the load on the single board computer, the load on
+the server and the network load.
+The CPU load on both computers is measured in terms
+of CPU and memory usage. We created a script, which runs
+the speciﬁed application for one hour. Before it ends the
+application, it uses two Linux-System commands to gather the
+following parameters.
+LCP U indicates the processor usage. We obtain this value
+with the Linux command ps -p <pid>
+-o %cpu which
+will return a measure for the percentage of time the process
+<pid> spent running over the measurement time.
+The maximum value for one core is always 100%. On
+our 8 core single-board computer the absolute maximum value
+would be LCP U = 800%. On the server the absolute maximum
+value is 600%.
+Lmem
+indicates
+memory
+usage
+in
+kByte.
+We
+use
+the amount of memory used by the process <pid> as
+the sum of active and paged memory as returned by
+the command ps aux -y | awk ’{if ($2 == <pid>
+) print $6}’. It outputs the resident set size (RSS) mem-
+ory, the actual memory used which is held in RAM.
+Ldisk shows the the amount of disk used by a database. To
+determine this parameter we ﬁrst empty the respective database
+completely by removing its data folder. Also we start the
+database and measure the disk space of the folder before we
+test. After the test we measure the used disk space again and
+use the difference as result. du -sh <foldername> is used to
+get the disk consumption of the respective data folder. To put
+the results in perspective: Our benchmark application gathers
+and transmits ⇡ 53MByte of raw data during the one hour of
+our test.
+LIO shows ...
+TODO
+Plenk:
+Beschreiben
+Lnet shows the average bandwidth used. We obtain that
+value with the command nload. To put that number in
+perspective: In our benchmark we transfer 10.000 bytes
+sec
+from
+the microcontroller to the single-board computer.
+We run our test in the university network and therefore
+h
+dditi
+l
+t
+l
+t
+k l
+d H
+b f
+h
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VII.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criteria.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests
+The RAM usage of the InﬂuxDB components were the lowest
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the
+disk was signiﬁcantly higher when using MariaDB compared
+to the others. The InﬂuxDB and the bulk implementation of
+MongoDB got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step before we add them up we assign
+each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+Lastly we take the subjective difﬁculty of our implementa-
+tions into account. We grade on a scale from 5, most difﬁcult
+t
+1
+d
+i h thi
+t
+ith 0 2 Th
+i di id
+l
+nce no external code is required and
+structure is not possible, using the
+d and fast to implement.
+also offers built-in functions to
+d a client library is not absolutely
+ﬁt for software developers using it.
+the probability of data loss, which
+ase. For enabling the UDP service
+conﬁgured correspondingly to the
+ﬂuxData.4
+EST CRITERIA
+r context face limitations in terms
+twork bandwidth. Consequently we
+ngle board computer, the load on
+load.
+h computers is measured in terms
+e. We created a script, which runs
+for one hour. Before it ends the
+ux-System commands to gather the
+cessor usage. We obtain this value
+ps -p <pid>
+-o %cpu which
+he percentage of time the process
+the measurement time.
+or one core is always 100%. On
+mputer the absolute maximum value
+On the server the absolute maximum
+mory
+usage
+in
+kByte.
+We
+use
+used by the process <pid> as
+paged memory as returned by
+y | awk ’{if ($2 == <pid>
+s the resident set size (RSS) mem-
+d which is held in RAM.
+ount of disk used by a database. To
+e ﬁrst empty the respective database
+ts data folder. Also we start the
+disk space of the folder before we
+sure the used disk space again and
+du -sh <foldername> is used to
+f the respective data folder. To put
+Our benchmark application gathers
+of raw data during the one hour of
+e bandwidth used. We obtain that
+nload. To put that number in
+mark we transfer 10.000 bytes
+sec
+from
+ingle-board computer.
+university network and therefore
+k l
+d H
+b f
+h
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+and the server during the test.
+VII.
+RESULTS
+Table IV shows our results. Figure 3 visualizes the data in
+relation to the maximum values in respective to each criteria.
+The Bulk implementations of MariaDB and MongoDB
+are able to surpass all other databases in regard to server
+processor usage. InﬂuxDB required the least CPU usage when
+only regarding individual implementations. All implementa-
+tions could handle the high data rate, however the rate of the
+MariaDB individual implementation was ﬂuctuating in tests.
+The RAM usage of the InﬂuxDB components were the lowest.
+Nonetheless, even the utilization of MariaDB - the database
+with the highest memory usage - was absolutely seen so low
+that it may not be relevant. The usage and activity of the
+disk was signiﬁcantly higher when using MariaDB compared
+to the others. The InﬂuxDB and the bulk implementation of
+MongoDB got by with the least amount of disk usage.
+To directly compare all our candidates we calculate a
+combined score by weighing the parameters. In a ﬁrst step
+we set the values of each column in Table IV in relation
+to the columns maximum, so that we compare the relative
+performance. In the next step before we add them up we assign
+each parameter a weighting.
+Since we ﬁnd that the CPU is the most important parameter,
+we give it a weight of 2 on server and as resources on
+client are limited it is weighted with 2.5 there. In absolute
+terms, the RAM usage on server and client was very little
+and therefore we weight it with 0.25. For IO we used a SSD,
+when using a HDD, IO usage could pose a larger problem
+and therefore it is weighted with 2.5. As the disk usage is
+already correlating with IO, we weight it with 0.5 so that the
+impact of the disk results is in a decent relation to the other
+component results. On difﬁcult places, network-bandwidth
+could be limited, potentially a data logging application could
+be connected wirelessly, so we weight it with 1.5.
+Lastly we take the subjective difﬁculty of our implementa-
+tions into account. We grade on a scale from 5, most difﬁcult
+t
+1
+d
+i h thi
+t
+ith 0 2 Th
+i di id
+l
+Figure 3.
+Overview of all Benchmark Values (normalized to respective Maximum)
+MariaDB_Single
+MongoDB_Single
+InfluxDB
+MongoDB_Bulk
+MariaDB_Bulk
+0,00%
+10,00%
+20,00%
+30,00%
+40,00%
+50,00%
+60,00%
+70,00%
+80,00%
+90,00%
+100,00%
+CPU_Server
+RAM_Server
+IO_Server
+CPU_Client
+RAM_Client
+Netzwerk
+(inc, mBit/s)
+Festplatte
+(M)
+Difficulty
+Score
+MariaDB_Single
+MongoDB_Single
+InfluxDB
+MongoDB_Bulk
+MariaDB_Bulk
+uired and
+using the
+ctions to
+bsolutely
+using it.
+ss, which
+P service
+ly to the
+in terms
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+o. Since no external code is required and
+data structure is not possible, using the
+rward and fast to implement.
+xDB also offers built-in functions to
+ly and a client library is not absolutely
+beneﬁt for software developers using it.
+P has the probability of data loss, which
+se case. For enabling the UDP service
+was conﬁgured correspondingly to the
+by InﬂuxData.4
+TEST CRITERIA
+in our context face limitations in terms
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+rnal code is required and
+s not possible, using the
+o implement.
+rs built-in functions to
+library is not absolutely
+ware developers using it.
+bility of data loss, which
+abling the UDP service
+correspondingly to the
+RIA
+face limitations in terms
+dwidth. Consequently we
+d computer the load on
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+ction sendto. Since no external code is required and
+design of the data structure is not possible, using the
+is straight-forward and fast to implement.
+ionally, InﬂuxDB also offers built-in functions to
+data statistically and a client library is not absolutely
+y, which is a beneﬁt for software developers using it.
+hoice of UDP has the probability of data loss, which
+able in our use case. For enabling the UDP service
+DB, the OS was conﬁgured correspondingly to the
+on provided by InﬂuxData.4
+V.
+TEST CRITERIA
+applications in our context face limitations in terms
+uting power and network bandwidth. Consequently we
+the load on the single board computer the load on
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+Unix function sendto. Since no external code is required and
+a custom design of the data structure is not possible, using the
+database is straight-forward and fast to implement.
+Additionally, InﬂuxDB also offers built-in functions to
+process data statistically and a client library is not absolutely
+necessary, which is a beneﬁt for software developers using it.
+The choice of UDP has the probability of data loss, which
+is acceptable in our use case. For enabling the UDP service
+of InﬂuxDB, the OS was conﬁgured correspondingly to the
+information provided by InﬂuxData.4
+V.
+TEST CRITERIA
+Most applications in our context face limitations in terms
+of computing power and network bandwidth. Consequently we
+measure the load on the single board computer, the load on
+the server and the network load
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+Unix function sendto. Since no external code is required and
+a custom design of the data structure is not possible, using the
+database is straight-forward and fast to implement.
+Additionally, InﬂuxDB also offers built-in functions to
+process data statistically and a client library is not absolutely
+necessary, which is a beneﬁt for software developers using it.
+The choice of UDP has the probability of data loss, which
+is acceptable in our use case. For enabling the UDP service
+of InﬂuxDB, the OS was conﬁgured correspondingly to the
+information provided by InﬂuxData.4
+V.
+TEST CRITERIA
+Most applications in our context face limitations in terms
+of computing power and network bandwidth. Consequently we
+measure the load on the single board computer, the load on
+the server and the network load
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+s required and
+ible, using the
+ent.
+functions to
+not absolutely
+opers using it.
+ata loss, which
+UDP service
+ndingly to the
+tions in terms
+nsequently we
+r, the load on
+LCP UServer
+LCP UClient
+(1)
+LmemServer
+LmemClient
+(2)
+Lnet
+Ldisk
+LIO
+(3)
+(4)
+VI.
+TESTING
+Before each test, we restart both the Banana Pi and the
+server. We then erase the database folder on the server and give
+both systems ⇡ 5min to settle. Then we turn on the function
+generators, log in to the single-board computer and start the
+Database Writer software for the currently active database. The
+actual benchmark begins with starting the Receiver Software.
+We let the system gather data from the function generators
+for 60 minutes. The performance data detailed in Section V is
+gathered by two scripts running on the single-board computer
+Figure 4.
+Weighted scores (normalized to maximum score)
+50
+Copyright (c) IARIA, 2018.     ISBN:  978-1-61208-669-9
+ICSNC 2018 : The Thirteenth International Conference on Systems and Networks Communications
+

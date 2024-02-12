@@ -1,0 +1,571 @@
+Realtime Computation of a VST Audio Effect Plugin on the Graphics Processor
+Wolfgang Fohl
+HAW Hamburg
+University of Applied Sciences
+Hamburg, Germany
+Email: fohl@informatik.haw-hamburg.de
+Julian Dessecker
+Steinberg Media Technologies GmbH
+Hamburg, Germany
+Email: J.Dessecker@steinberg.de
+Abstract—A plugin system for GPGPU real time audio effect
+calculation on the graphics processing unit of the computer system is
+presented. The prototype application is the rendering of mono audio
+material with head-related transfer functions (HRTFs) to create the
+impression of a sound source located in a certain direction relative
+to the listener’s head. The virtual source location can be controlled
+in realtime. Since HRTFs are measured only for certain incident
+angles, a interpolation for intermediate angles has to be performed in
+realtime. Plugins are implemented using the VST software development
+kit offered by Steinberg Media Technologies. Two GPU processing
+frameworks for a NVIDIA graphics processor were evaluated: CUDA
+and OpenCL. The overall processing speed can be increased by the
+factor 2.2 with the GPGPU modules. When calculating the FIR ﬁlter
+outputs by fast convolution on the GPU, the processing speed can even
+be increased by the factor ten.
+Keywords-GPGPU computing; VST plugin; Spatial audio; Head-
+related transfer functions;
+I. INTRODUCTION
+This article presents a case study for the application of GPGPU
+techniques to the realtime audio signal processing. GPGPU com-
+puting (i.e., execution of general purpose computation on the
+graphics processor) has raised considerable interest with the avail-
+ability of software development kits (SDKs) that offer an access
+to the massive parallel computing capabilities of modern graphics
+processors. The two most common frameworks are OpenCL, which
+provides an vendor-independent access to GPGPU computing, and
+CUDA-C, which is an extension to the C language for GPGPU on
+NVIDIA graphics processors [1] [2]. While CUDA is a proprietary
+framework restricted to NVIDIA GPUs, OpenCL is an open
+standard maintained and published by the Khronos Group [3]. The
+actual OpenCL development framework is provided by the GPU
+manufacturers.
+The initial motivation for this work was the promise of GPGPU
+to drastically accelerate tasks that can be parallelised. This is
+the case for realtime audio processing. Input and output data of
+audio processing units are buffered, which offers the opportunity
+to calculate all the output samples of a buffer simultaneously from
+the input samples. Furthermore, the calculation of a single output
+sample offers opportunities for parallel execution: Most audio
+processing tasks consist in evaluating a ﬁnite difference equation
+for the N output buffer elements yout:
+{yout} =
+(
+yi|yi =
+N
+X
+k=0
+fk(xi−k) −
+N
+X
+k=1
+gk(yi−k)
+)
+(i=0...N−1)
+(1)
+Here, {yout} is the array of output samples, i is the sample index,
+x is the input signal, and k is a summation index.
+In the case of a linear and time-invariant audio processor, the
+functions of eq. 1 are merely multiplications with constant values
+{ak} and {bk}:
+{yout} =
+(
+yi|yi =
+N
+X
+k=0
+bk · xi−k −
+N
+X
+k=1
+ak · yi−k
+)
+(i=0...N−1)
+(2)
+Very often in audio processing, ﬁlters with a ﬁnite impulse
+response (FIR ﬁlters) are employed , for which the difference
+equation simpliﬁes to
+{yout} =
+(
+yi|yi =
+N
+X
+k=0
+bk · xi−k
+)
+(i=0...N−1)
+(3)
+which is the convolution of the impulse response {bi} of the ﬁlter
+with the input signal {xi}. So for each value of the output buffer,
+the summation of eq. 3 has to be performed, where the computation
+for each output value as well as the computation of each summand
+can be calculated simultaneously. The convolution operation of
+eq. 3 can be considerably sped up by using the fast convolution
+algorithm. The basic idea is given by:
+{bi}
+FFT
+⇒
+{Bj}
+(4)
+{xi}
+FFT
+⇒
+{Xj}
+(5)
+{yout}
+IFFT
+⇐
+{Bj · Xj}
+(6)
+A FFT is applied to the ﬁlter coefﬁcients and the input signal block,
+the resulting arrays are multiplied element-wise, and the product
+is transformed back. The two arrays {bi} and {xi} have to be
+brought to twice the buffer length by zero-padding, which in turn
+will give an output signal of twice the buffer length. The ﬁrst half
+is added to the second half of the previous processing step and
+transferred to the output buffer.
+The audio processing task that shall be executed as prototype
+application is the spatial rendering of mono audio signals by
+head-related transfer functions (HRTFs) according to the procedure
+described in [4].
+In the following sections, the algorithm for spatial rendering
+is described, followed by an overview of the GPGPU and VST
+plugin architectures. Finally, our solution is described together
+with some implementation details, and the results of performance
+measurements are presented and discussed.
+58
+CONTENT 2011 : The Third International Conference on Creative Content Technologies
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-157-1
+
+II. OVERVIEW OF TECHNICAL CONCEPTS
+A. Spatial Audio Rendering
+In order to make a mono audio signal appear to be coming
+from a certain direction of incidence, the signal is ﬁltered by head-
+related transfer functions (HRTFs), that mimic the inter-aural time
+delays, level differences and differences in frequency response. If
+the resulting stereo signal is replayed via headphones, the perceived
+signals are similar to real signals emanating from a source at the
+corresponding location.
+Since the coefﬁcients of the ﬁlters could only be measured at
+certain discrete angles as indicated in Fig. 1, an interpolation has
+to be performed for intermediate angles. The input signal is routed
+to four ﬁlters, each representing one corner in the interpolation
+grid of Fig. 1, then a linear interpolation of the output signals is
+performed. Details are given in [4].
+Figure 1.
+Grid of measured HRTF data
+B. GPGPU Computing
+The parallel processing architecture of the graphical processing
+unit (GPU) found on modern hardware suits in an optimal way
+the needs of many numerical processing tasks. The release of the
+CUDA SDK by NVIDIA in 2007 and the approval of the OpenCL
+standard in 2008 opened the ﬁeld of GPGPU computing to the
+community of developers and researchers.
+GPGPU computing offers a performance boost for algorithms
+that can be parallelised, as is shown in the code snippets in ﬁgure 2.
+Both programs perform an array addition. While in conventional
+CPU processing the program iterates over all array elements, the
+GPU program starts one thread for each array element, provided
+there are enough processing units. The threads on the GPU are
+programmed as so-called “kernels”.
+/ /
+Kernel
+d e f i n i t i o n
+__global__
+void VecAdd ( f l o a t ∗ A,
+f l o a t ∗ B,
+f l o a t ∗ C)
+{
+i n t
+i = t h r e a d I d x . x ;
+C[ i ] = A[ i ] + B[ i ] ;
+}
+i n t
+main ( void )
+{
+/ / CPU o p e r a t i o n
+for
+( i n t
+i = 0;
+i < N,
+i ++)
+C[ i ] = A[ i ] + B[ i ] ;
+. . .
+/ /
+Kernel
+i n v o c a t i o n
+with N threads
+VecAdd<<<1, N>>>(A, B, C ) ;
+. . .
+}
+Figure 2.
+Array addition on the GPU with the CUDA SDK
+One drawback of GPGPU computing on consumer-grade GPUs
+has to be mentioned. Since these GPUs are designed for optimum
+video game performance, there is no need for checking the integrity
+of the GPU memory, since memory errors would only affect the
+currently displayed video frame. High reliability can be either
+attained by software means as described in [5], or by using GPU
+hardware dedicated to GPGPU computing, which are equipped with
+ECC-protected memory [6].
+C. VST Plugin Architecture
+Steinberg Media Technologies developed a plugin system for the
+extension of audio workstation software with external effects and
+with external virtual instruments. Developers can obtain a SDK
+after registering on the Steinberg website [7].
+A plugin consists of two parts, the processor and the edit
+controller. The processor does the audio signal processing, the
+edit controller provides the GUI for parameter visualisation and
+modiﬁcation.
+Data transfer between host and plugin is performed by means
+of the VST plugin interface methods: One block of audio data is
+provided by the host in the input buffer of the plugin. Then the host
+calls the process method of the plugin, the plugin then has to
+compute the audio samples and transfer them to the output buffer,
+where the host will fetch it.
+III. SYSTEM IMPLEMENTATION
+A. Technical Details
+The software was implemented on a PC with an Intel Core2Quad
+Q9400 processor operated at 2.66 GHz, a NVIDIA GeForce 9600
+graphics processor with 650 MHz core clock, and a Creative ES
+1371 sound card. The operating system was Windows XP SP 3, the
+VST host application was Steinberg Cubase 5. The VST SDK was
+version 3.1.0.
+B. Filter Module Architecture
+Figure 3.
+System architecture with VST Host (Cubase), VST plugin, and
+HRTF processor
+In this project, the CudaHRTF VST plugin was developed as a
+wrapper for various ﬁlter modules with various implementation of
+59
+CONTENT 2011 : The Third International Conference on Creative Content Technologies
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-157-1
+
+the HRTF rendering algorithm. The ﬁlters modules were created
+as independent dll ﬁles. Four ﬁlter dlls were developed:
+ﬁlt_cuda.dll
+Filter implementation using the CUDA-C SDK and fast
+convolution in the frequency domain
+ﬁlt_ocl.dll
+Filter implementation using the OpenCL SDK and time-
+domain convolution
+ﬁlt_sse.dll
+Filter implementation on the CPU using the SSE2
+(Streaming Single-Instruction-Multiple-Data) extension,
+time-domain convolution
+ﬁlt_fpu.dll
+Filter implementation using standard FPU code and time-
+domain convolution
+Fig. 3 shows the component design, showing the VST host, the
+VST plugin, and one ﬁlter module.
+Note on Time-Domain Convolution: The computation steps
+for time-domain convolution of the input signal xi with the
+FIR ﬁlter coefﬁcients {bi}i=0...L−1, where L is the ﬁlter length
+according to
+yi =
+L
+X
+k=0
+xi−k · bk
+(7)
+can only be parallelised for the products in the sum. The
+summation itself has to be either performed in a sequential loop,
+or by successively cutting the summand array into halves and
+adding these halves in parallel operations. With the abbreviation
+si,k = xi−k · bk the sum of eq. 7 can be rewritten as
+yi =
+L/2
+X
+k=0
+si,k + si,k+L/2+1
+(8)
+This procedure of cutting the summand array into halves can be
+repeated log2 L times.
+The plugin accepts mono audio data from the VST host, and
+provides stereo audio data.
+The class HRTFModule connects the VST plugin and the ﬁlter
+component. The class diagram is given in Fig. 4.
+Figure 4.
+HRTF ﬁlter component class diagram
+The data structure HRTFProcessData contains the necessary
+data for the HRTFModule to perform the HRTF rendering.
+Four ﬁlters are referenced by their ID, containing the coefﬁcients
+for the interpolation limits for azimuth and elevation angles. Two
+typedef
+s t r u c t
+HRTFProcessData {
+i n t
+numSamples ;
+/ /
+I /O b u f f e r
+s i z e
+i n t
+f i l t e r I D [ 4 ] ;
+/ /
+F i l t e r s
+f o r
+i n t e r p o l a t i o n
+f l o a t
+w e i g h t S t a r t [ 4 ] ;
+/ /
+Weights
+at
+block
+s t a r t
+f l o a t
+weightEnd [ 4 ] ;
+/ /
+Weights
+at
+block
+end
+f l o a t
+∗ i n p u t ;
+/ /
+Mono i n p u t
+s i g n a l
+f l o a t
+∗ l e f t O u t p u t ;
+/ /
+Ster eo
+output :
+l e f t
+f l o a t
+∗ r i g h t O u t p u t ;
+/ /
+Ster eo
+output :
+r i g h t
+} HRTFProcessData ;
+Figure 5.
+HRTFProcessData data structure
+sets of weight factors contain the interpolation weights at block
+start and block end, so that a smooth movement of the source can
+be rendered. A problem occurs when the source position crosses the
+limit of the current interpolation cell. Possible solutions were either
+to extrapolate beyond the limits or to limit the source movement
+to the end of the interpolation interval and continue with a new
+interpolation interval in the next blocks (see Fig. 6 ). Prototypes
+for both approaches were implemented in Matlab. It turned out,
+that the extrapolation approach resulted in audible clicks at block
+limits, whereas there were no audible clicks in the second approach.
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+0◦
+30◦
+60◦
+90◦
+Azimuth
+angle
+blocks
+Nominal Angle:
+Modiﬁed Angle:
+Figure 6.
+Dynamic angle interpolation at interval limits. The gray line
+shows the desired values of the azimuth angle of the virtual source, the black
+line shows the actual rendered angles due to block-wise data processing.
+C. Filter Design
+HRTF ﬁlters were designed in Matlab as FIR ﬁlters using
+previously measured data of a dummy-head system. Frequency
+and phase responses were measured at azimuth angles from 0◦
+to 180◦ in steps of 30◦. The data for the interval from 180◦ to
+360◦ were obtained by interchanging the left and right channels.
+Elevation angles were -45◦(below), 0◦(plane), and 45◦(above). In
+order to easily conﬁgure the plugin ﬁlter components, a XML
+DTD was deﬁned, and the Matlab ﬁlter design program produced
+a corresponding XML ﬁle as output, which in turn could be read
+by the ﬁlter component. For XML parsing the TinyXML library is
+used [8].
+D. Code Instrumentation
+An audio plugin is a realtime application and as such very
+sensitive to modiﬁcations of the runtime environment of the plugin.
+This makes it difﬁcult or impossible to use standard tools like
+debuggers and proﬁlers. The approach used in this project is code
+instrumentation. Each call to the process methode of the ﬁlter
+module is framed with calls to the start and stop methods of
+60
+CONTENT 2011 : The Third International Conference on Creative Content Technologies
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-157-1
+
+the timer object which in turn calls the Windows API function
+QueryPerformanceCounter, to get high resolution timing in-
+formation. The stop method calculates the elapsed time and updates
+HRTFResult HRTFProcess ( HRTFProcessData∗ data )
+{
+REQUIRE( h r t f P r o c e s s P t r ) ;
+timer . s t a r t ( ) ;
+HRTFResult
+r e s u l t
+=
+h r t f P r o c e s s P t r ( h r t f C o n t e x t ,
+data ) ;
+timer . stop ( ) ;
+return
+r e s u l t ;
+}
+/ /
+. .
+The
+timer
+methods
+i n l i n e
+void
+s t a r t ( )
+{
+QueryPerformanceCounter (& t0 ) ;
+}
+i n l i n e
+double
+stop ( )
+{
+QueryPerformanceCounter (& t1 ) ;
+double
+cur = ( t1 . QuadPart − t0 . QuadPart ) ∗ f a c t o r ;
+avg = ( avg + cur ) ∗ 0 . 5 ;
+max = max > cur
+? max :
+cur ;
+min = min < cur
+? min
+:
+cur ;
+return
+cur ;
+}
+Figure 7.
+Code Instrumentation for Performance Measurement
+the log. This approach implements a performance measurement
+with minimum interference with the normal plugin operation. It
+has to be noted tough, that the measured time is “wall-clock time”,
+not CPU time, so to a small extent the measured results depend on
+the scheduling of the plugin by the operating system.
+IV. RESULTS AND DISCUSSION
+A. Listening Impression
+All ﬁlter components were tested with pieces of solo vocal
+music. The ﬁlters produced naturally sounding position rendering
+of the input audio material without clicks and other artefacts when
+moving the controls to change the virtual source location.
+B. Performance Measurements
+All performance measurements were executed with 20 seconds
+of audio playback. During this time the azimuth and elevation
+angles of the virtual source are varied according to a path that
+has been recorded once and was replayed by the automation
+functionality of the VST host.
+Module
+tmin/ms
+tmax/ms
+tavg/ms
+CUDA-C
+Fast Convolution
+2
+56
+2
+OpenCL
+Time Domain Convolution
+8
+18
+10
+CPU-SSE2
+Time Domain Convolution
+12
+36
+17
+CPU.dll
+Time Domain Convolution
+12
+31
+22
+It can be seen, that the GPU algorithms perform signiﬁcantly
+faster than the FPU algorithms, which was to be expected. An
+irritating observation is the large maximum value of the execution
+time for the CUDA ﬁlter module, while the average execution
+time is equal to the minimum execution time. This indicates, that
+this long time has occurred very few times, probably only once.
+Unfortunately the way of code instrumentation does not give any
+information, when and how often such a large execution time
+occurs. It can be assumed, that this large time occurs during the
+setup phase of the FFT algorithm (during setup a plan is created).
+If this assumption is conﬁrmed by further experiments, the creation
+of the FFT plan can be moved to the plugin constructor, so it would
+not cause audio dropouts.
+V. CONCLUSION
+In this article, a GPGPU based realtime audio effects processor
+was presented. In particular, spatial audio rendering by ﬁltering
+the mono input signal with the head related transfer functions for
+the corresponding angle of sound incidence has been performed.
+The FIR ﬁltering algorithm has been moderately customised to
+exploit the beneﬁts of GPGPU computing, leading to an increase
+in computation speed by a factor of 2.2.
+During the listening and performance measurement test no ob-
+servable memory errors occurred. A systematic test for memory er-
+ror problems has to be conducted. For high reliability requirements
+a graphics card dedicated to GPGPU computing must be employed.
+These cards have ECC protected memory, which consumer level
+cards do not have.
+The reason for the large maximum execution time for the CUDA
+fast convolution implementation has to be identiﬁed and removed.
+VI. ACKNOWLEDGEMENTS
+This article is the result of a project course on professional audio
+application development held at the Hamburg University of Applied
+Sciences (HAW) together with Steinberg Media Technologies.
+Thanks to the Steinberg developers, especially Ralf Kürschner, Dr.
+Nico Becherer and Yvan Grabit for their support and thanks to
+the students Leonhard Dahl, Tobias Hassenklöver, Ines Ouanes,
+Marcus Rohwer, Areg Siradeghyan, Alexander Vette, and Özhan
+Yavuz for their contributions to the software.
+REFERENCES
+[1] OpenCL Programming Guide for the CUDA Architecture, 3rd ed.,
+NVIDIA Corp., 2010.
+[2] NVIDIA CUDA C Programming Guide, 3rd ed., NVIDIA Corp.,
+2010.
+[3] “Khronos opencl api registry,” Khronos Group, Accessed 2011-
+05-05. [Online]. Available: http://www.khronos.org/opencl/
+[4] W. Fohl, J. Reichardt, and J. Kuhr, “A System-On-Chip Platform
+for HRTF-Based Realtime Spatial Audio Rendering,” in Proc. of
+the Second International Conference on Creative Content Tech-
+nologies (Content10), Lisbon, Portugal, 2010.
+[5] M. Dimitrov, M. Mantor, and H. Zhou, “Understanding software
+approaches for GPGPU reliability,” in Proceedings of 2nd Work-
+shop on General Purpose Processing on Graphics Processing
+Units, ser. GPGPU-2.
+New York, NY, USA: ACM, 2009, pp.
+94 –104, ACM ID: 1513907.
+[6] “Why choose tesla,” NVIDIA Corp., Accessed 2011-05-05.
+[Online].
+Available:
+http://www.nvidia.com/object/why-choose-
+tesla.html
+61
+CONTENT 2011 : The Third International Conference on Creative Content Technologies
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-157-1
+
+[7] “Vst plugin sdk,” Accessed 2011-05-02. [Online]. Available:
+http://www.steinberg.net/en/company/developer.html
+[8] L.
+Thomason,
+Y.
+Berquin,
+and
+A.
+Ellerton,
+“TinyXML
+Project
+Page,”
+Accessed
+2011-04-28.
+[Online].
+Available:
+http://www.grinninglizard.com/tinyxml/index.html
+62
+CONTENT 2011 : The Third International Conference on Creative Content Technologies
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-157-1
+

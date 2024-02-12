@@ -1,0 +1,749 @@
+Towards Optimized Probe Scheduling for
+Active Measurement Studies
+N. Daniel Kumar, Fabian Monrose, and Michael K. Reiter
+Department of Computer Science
+University of North Carolina
+Chapel Hill, NC, USA
+{ndkumar, fabian, reiter}@cs.unc.edu
+Abstract—Internet measurement studies often require pro-
+longed probing of remote targets to collect information, yet
+almost all such studies of which we are aware were undertaken
+without considering the polluting effects of their unconstrained
+probing behavior. To help researchers conduct experiments in a
+more responsible fashion, we present a framework and technique
+that enables efﬁcient execution of large-scale periodic probing
+without exceeding pre-set limits on probing rates. Our technique
+employs a novel scheduling algorithm and leverages knowledge
+of diurnal trafﬁc patterns to make data collection more efﬁcient
+(e.g., by probing servers only during periods in which probe
+results will be most useful). We evaluate our technique in the
+context of a real-world study and show that it substantially
+outperforms na¨ıve probing strategies for accomplishing the same
+goal, sending more probes during useful periods, fewer probes
+overall, and probing at more precise intervals as required by our
+measurement applications.
+Keywords-probe scheduling; responsible network experiments.
+I. INTRODUCTION
+Over the past several decades, researchers and practitioners
+have proposed countless techniques for understanding various
+characteristics about the Internet at large. For the most part,
+these pursuits have been grounded in empirical measurements
+that are either passive or active in nature. As their names
+imply, passive measurements typically involve observations
+taken from some form of capture device, while active mea-
+surements require the injection of specially crafted packets
+(so-called probes) into the network to infer characteristics of
+the phenomenon under scrutiny.
+Recently, there has been a marked increase in the use of
+active measurements for understanding Internet topology and
+mapping (e.g., geo-location), path-variance and other end-to-
+end performance dynamics (e.g., bandwidth estimation), the
+spread of security-related events (e.g., worm outbreaks), and
+client and server demographics (e.g., website popularity), etc.
+To better enable such studies and improve data collection
+efforts, a number of scalable measurement infrastructures
+(e.g., CAIDA’s Archipelago Measurement [10], Google’s M-
+lab open platforms, and the Flexible Lightweight Active Mea-
+surement Environment [25]) have been made available to the
+research community for controlled experiments. Archipelago,
+for example, provides a centrally managed framework that
+supports a distributed shared-memory architecture that can be
+used to coordinate network measurements across the globe.
+A common requirement in many of the Internet-wide studies
+being conducted today is the need to repeatedly probe some
+set of targets over time. Collectively, we rely on each ex-
+perimenter’s own restraint to limit the volume of trafﬁc they
+inject into the network and/or target at a given resource. While
+some experimenters exercise such restraint to limit collateral
+damage, in the absence of accepted guidelines for such mea-
+surements and tools to enable experiments that respect them,
+the injection of billions of probes into the network during a
+short period of time is not uncommon (e.g., [3]); indeed, the
+literature is rife with examples of arguably egregious practices.
+Such disregard for the collateral damage caused by network
+measurement experiments has raised enough concern that it
+has led to a call urging the community to move towards a set
+of best practices for active measurements. As Papadopoulos
+and Heidemann note [17], as practitioners it should be our job
+to design experiments carefully, in a manner that signiﬁcantly
+lowers load without sacriﬁcing measurement ﬁdelity. In this
+paper, we present a technique for attempting to do just that.
+Speciﬁcally, we propose an efﬁcient scheduling algorithm for
+probing measurement targets, which is efﬁcient in that it can
+be tuned towards expeditious completion of the experiment
+while also observing some predeﬁned maximum probing rate.
+Of speciﬁc interest to us are studies of Internet demo-
+graphics (e.g., inferring website popularity rankings [19], [24],
+exploring the prevalence of malicious domain name system
+(DNS) servers [6], and client-density estimation [7], [20])
+where the ﬁdelity of the experiment can increase if the targets
+are probed at ideal times. We aim to maximize the utility
+of each probe that we send, in contexts where the utility
+of a probe can be correlated with time-of-day, e.g., when
+it is expedient to probe targets during their peak (or off-
+peak) trafﬁc periods. Our approach may also be extended
+for applications requiring that certain subsets of targets be
+probed contemporaneously, such as RadarGun [2] for IP alias
+resolution. We show that for experiments taking several days,
+and given limited probing resources, our scheduling algorithm
+outperforms several na¨ıve strategies for probe scheduling
+according to intuitive metrics provided in §IV.
+The remainder of this paper is organized as follows. Related
+work is presented in §II. In §III we outline our scheduling
+framework and algorithm, which we evaluate in §IV. We
+conclude in §V.
+26
+ICIMP 2011 : The Sixth International Conference on Internet Monitoring and Protection
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-125-0
+
+II. RELATED WORK
+As mentioned earlier, some experimenters have exercised
+restraint to limit collateral damage from the probes they inject.
+Bender et al. [2], for example, attempt to constrain their
+probing rates to avoid triggering rate limiters. Others [21],
+[11] have tried to take advantage of opportunistic measurement
+techniques in order to unobtrusively make network mea-
+surements without triggering alarms from intrusion detection
+systems. Unfortunately, these instances of restraint seem rare,
+and the academic literature contains numerous examples of
+experimenters probing at high rates (e.g., 260 packets per
+second [22]) or injecting high volumes of probes (e.g., 220
+million [6] and 27 billion probes [3]),1 which are arguably
+indistinguishable from attacks.
+Previous work on scheduling active network monitoring ac-
+tivities has focused on preventing the simultaneous scheduling
+of activities that would interfere with each other’s results and
+lead to inaccurate measurement reports [4], [8], [18]. Here we
+are not concerned with probes interfering with one another,
+but we focus rather on respecting a limit on the probe rate
+we induce on the network, while completing the probing
+experiment as quickly as possible. That is, because our targets
+are all distinct, by imposing limits on our probing rate we are
+able to mitigate (to some extent) packet loss due to network
+congestion. To complete the experiment quickly, we leverage
+knowledge of the useful interval in which each type of probe
+should occur, which is characteristic of the type of probing
+activities considered here but that is not utilized in these prior
+works. Moreover, we do not assume that information about
+the underlying network topology is readily available.
+Additionally, prior work in this area provides no guidance
+on how to prioritize probes for scheduling in the absence of
+network topology, and so is not helpful in our setting. The
+work of Calyam et al. [4] applies the basic earliest-deadline-
+ﬁrst (EDF) heuristic [15] that we use, but their scheduling
+is done in an ofﬂine setting; they do not utilize efﬁcient
+data structures to leverage the scalability of the simple online
+heuristic. Additionally, Calyam et al. do not allow for the
+possibility of dropped probes, and so their algorithm simply
+fails if all of their probes cannot be issued on time.
+Also related to our work (i.e., arranging as many targeted
+probe sequences as possible to ﬁt within some maximum rate
+limit) is the literature on perfectly periodic or cyclic scheduling
+on parallel processors. The fundamental scheduling problems
+are still NP-hard [16], but efﬁcient approximations [1] could be
+used for applications not requiring precisely periodic probes.
+III. APPROACH AND ASSUMPTIONS
+Our work is motivated by the need to ﬁnd more efﬁcient
+ways to schedule network probes. Speciﬁcally, we consider
+the common case wherein the prober needs to issue a series
+of probes to a given target, j, at some periodic interval,
+πj. In some cases, each target might have its own probing
+period (e.g., the time-to-live- (TTL-) based intervals assumed
+in various types of DNS cache snooping investigations [19],
+[24]), or the period might be uniform across all measurement
+points (as is the case with several ID-based alias resolution
+studies for creating router-level topology graphs [2], [13],
+[22]).
+indiatimes.com
+0h
+24h 0h
+24h
+yelp.com
+0h
+24h
+cnn.com
+Fig. 1: Hypothetical curves illustrating the volume of DNS
+requests (for different websites) observed by a DNS resolver.
+In the cache inspection example, the goal is to probe the
+resolver about a given website w, but only during peak periods
+of activity for w.
+We also assume that for some of the experiments, there is a
+notion of an idealized measurement window (i.e., a contiguous
+window of time) that we call a target’s “useful interval”,
+denoted [sj, ej). The intuition here is that the ﬁdelity of the
+experiment may be improved by probing targets during some
+region of time when we can expect the most utility out of our
+probes (see Figure 1). In the case of DNS cache inspection, for
+example, it makes little sense to probe a caching resolver [23]
+to infer density-based estimates of client populations using the
+server when most of its clients may be asleep or idle [7]. (We
+do not adapt these windows dynamically, although doing so
+would be useful for applications such as bandwidth estima-
+tion.) Lastly, we assume that the experiment dictates that a
+certain number of probes be sent to each target.
+For the remainder of the paper, we assume that network
+trafﬁc follows diurnal patterns—i.e., it is largely similar from
+day to day, but not from hour to hour, and it exhibits no major
+differences from week to week. Accordingly, we schedule
+probes to our targets in real time, using these diurnal trafﬁc
+patterns. Our solution makes use of a simple and efﬁcient
+priority queue, described in §III-C.
+A. Constraints
+Our scheduling algorithm must meet the following con-
+straints:
+1) periodic probes must be evenly spaced at intervals of
+(πj + δ), for some relatively small δ compared to the
+periodicity πj;
+2) a predetermined number of probes Nj must be issued to
+each target by the end of the probing experiment; and
+3) no more than L probes per second may be sent.
+In what follows, we meet the ﬁrst two constraints heuristi-
+cally, but observe the probing rate limit constraint strictly.
+B. Goals
+Ideally, we would like to probe each unﬁnished target (a
+target j to which we have sent fewer than Nj probes) every
+day at times {sj, sj+πj, sj+2πj, . . . , ∼ ej} within the target’s
+useful interval [sj, ej) until we have sent Nj probes to each
+target or the time for the experiment is exhausted. This would
+allow us to achieve perfect periodicity of πj between our
+27
+ICIMP 2011 : The Sixth International Conference on Internet Monitoring and Protection
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-125-0
+
+(2, ...)
+(0, 2, 302)  (1, 0, 1200)  (2, 5, 605)  (3, 2, 602)
+availabilityList[t]
+1
+2
+4
+3
+5
+t=0
+6
+after t=0 and
+t=2 steps...
+(1, 1200, 2400)
+(0, 302, 602)
+(3, 602, 1202)
+targets: (index, release, deadline)
+Fig. 2: An individual probe to a target j is initially placed into
+availabilityList[sj] according to the beginning of its
+useful interval [sj, ej). If the probe is issued, the succeeding
+probe to target j is placed into availabilityList[sj +
+TTLj].
+probes, and we would conserve probes by only issuing them
+within [sj, ej). Unfortunately, with a large number of targets,
+there is no guarantee that we can do this without exceeding
+our rate limit of L probes/sec at some point in time. Since we
+must observe our probing rate limit (3) strictly, the other two
+constraints are met only heuristically.
+Not every unﬁnished target will be probed on every day, but
+if a target j is probed on a given day, we require that it be hit
+with a sequence of (at most ⌈ ej−sj
+πj
+⌉) probes within the time
+interval [sj, ej), such that in every ﬁxed (non-sliding) window
+of duration πj beginning at time sj, there will be exactly one
+probe to the target j, until ej is reached or a probe is dropped
+(described below). By the end of the experiment, up to Nj
+probes will have been issued to each target j, but no more.
+C. Earliest-Deadline-First (EDF) Scheduling
+We characterize a single probe by the tuple (j, rj, dj), where
+j is the target to be probed, and [rj, dj) is the ﬁxed window
+of duration πj within which the probe should be issued. Thus,
+the ﬁrst probe in a sequence is (j, sj, sj + πj), the second
+(j, sj +πj, sj +2πj), and so on. Recall that we do not enforce
+the periodicity πj strictly; in principle, two probes may be as
+close together as 1 timestep or as far apart as 2πj−1 timesteps.
+We initialize our algorithm by populating an array called
+availabilityList of length T
+=
+86400 (seconds
+in a day) with the ﬁrst probes for each target, assign-
+ing a probe (j, rj
+=
+sj, dj
+=
+sj + πj) to position
+availabilityList[sj], the time at which the probe will
+become available for issuing. Starting at time t = 0, we
+push the probes from availabilityList[t mod T] onto
+a priority queue Q ordered by increasing dj—“earliest deadline
+ﬁrst”. In our notation, the time t is deﬁnite and monotonically
+increasing; the interval edges {sj, ej, rj, dj} are all within
+[0, T) and represent times between 00:00:00 and 23:59:59.
+At each timestep t, we pop and send as many probes as
+possible from Q without exceeding our rate limit L. For each
+probe (j, rj, dj) that we send, we place its successor probe
+(j, dj, max(dj + πj, ej)) into availabilityList[dj] if
+the target j remains to be probed. We thus aim to issue the
+successor probe in the πj-length window immediately follow-
+ing [rj, dj). If the ﬁrst probe (j, rj, dj) is issued near the end
+of the window [rj, dj), this means a lot of probing resources
+are being consumed around time t, and the succeeding probe
+is likely to be issued near the end of the window [dj, dj +πj),
+so that the probing periodicity πj is attained heuristically.
+The probes left in Q are carried over onto timestep (t + 1),
+and then combined with the probes pushed onto Q from
+availabilityList[t + 1]. If a probe to j is dropped,
+i.e., it is popped off of Q at a time t ≥ dj, this means
+that the rate limit has been reached for the last πj timesteps,
+and remaining probes to j are postponed until t re-enters the
+useful interval [sj, ej) the following time, in order to ease the
+workload and reduce probe delay. More precisely, if a probe
+(j, rj, dj) is dropped, the probe (j, sj, sj + πj) is placed into
+availabilityList[sj] and reconsidered at time t ≡ sj
+(mod T).
+Thus, probes may be dropped from the ends of sequences,
+but never from the middle; we succeed in guaranteeing that
+there will be exactly one probe sent to j in every ﬁxed window
+of length πj from sj until the end of the probing sequence. We
+also strictly observe our probing rate limit L (constraint (3) in
+§III-C). Our heuristic success in evenly spacing our probes at
+(πj + δ) intervals (constraint (1)) and sending Nj probes to
+each target (constraint (2)) is illustrated in §IV.
+D. Complexity
+The use of a priority queue with amortized constant-time
+pushes and log-time pops (in the length of the queue) makes
+our approach scalable: for an experiment of duration D days,
+our worst-case time complexity is O(J · N · D · log J), where
+J is the number of targets to probe and N
+.= maxj Nj is
+the maximum number of probes to send to a target. When
+scheduling online at each timestep, the time complexity is
+O(J log J). The space requirement of our algorithm is O(J).
+IV. EVALUATION
+We evaluate our approach via a simulation of a week-long
+measurement experiment that aptly demonstrates a type of
+Internet-wide study which uses DNS cache inspection [9] to
+infer demographic information. For example, both Wills et
+al. [24] and Rajab et al. [19] used cache inspection techniques
+to infer the relative popularity of a set W of websites of
+interest. The basic idea is that the caches of a number of DNS
+resolvers across the globe are probed at regular intervals, and
+the responses are used to compute the request rate for each
+website w ∈ W. Intuitively, DNS entries of websites with
+higher hit rates will be refreshed more quickly than those
+with lower hit rates, and so the targets in W can be ranked
+accordingly. The probe periodicity is determined to match the
+authoritative TTL of the targeted website w. It is also assumed
+that the ideal probing interval (the “useful interval”) for a pair
+(v, w) is the period when the frequency of requests for the
+website w from clients using resolver v is highest.
+28
+ICIMP 2011 : The Sixth International Conference on Internet Monitoring and Protection
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-125-0
+
+In the analysis that follows, we simulate probing 100,000
+targets, each with their own useful interval and probing pe-
+riodicity. Our probing periodicities, then, are target-speciﬁc
+as opposed to timezone-speciﬁc (π(v,w) = TTLw), as are our
+useful intervals ([s(v,w), e(v,w))). We set the number of probes
+required per target to be Nj = 50 (for all targets j). The
+probing limit is set conservatively at L = 100 probes/second.
+Lastly, client DNS trafﬁc patterns were modeled [12] using
+a 21-day trace of outgoing http requests from a university
+campus network [5]. For each target, we calculated the mean
+µ and standard deviation σ of the target’s DNS trafﬁc pattern
+(Figure 1). We evaluated useful interval settings of [µ−σ, µ+
+σ) (the mean window length being 9h30m, containing 70%
+of trafﬁc) and [µ − 2σ, µ + 2σ) (mean windows of 19h, 95%
+of trafﬁc).2
+A. Comparative Schemes
+To evaluate the effectiveness of our approach, we compare it
+with six alternative strategies for accomplishing the same goal
+of issuing 50 probes to each target during the target’s useful
+interval. The strategies follow the same restrictions as we do
+(i.e., maximum probing rate, number of targets, periodicity,
+etc.), but are na¨ıve in that they do not take useful intervals
+or other diurnal trafﬁc patterns into account when scheduling
+their probes.
+• SHORTESTPERIODSFIRST: prioritize targets with the
+shortest periodicities. This approach might be useful
+in the contexts of several measurement studies in the
+literature [6], [22], to collect as much measurement data
+as possible early in the experiment.
+• LONGESTPERIODSFIRST: prioritize targets with the
+longest periodicities in order to complete the experiment
+in as few days as possible. Note that with variable probing
+periodicities, the overall length required to complete the
+experiment will be determined by the “long tail” caused
+by late probing of a few targets with long periodicities.
+Just like the above approach, shortening this long tail
+would also be desirable in many studies [6], [22].
+• SLIDINGWINDOW: begin probing a random subset of
+targets on day 1, adding another subset on day 2, and
+so on until all targets have been added. This strategy is
+inspired by the approach of Keys et al. [13] to allow
+certain subsets of targets to overlap in probing.
+• ROUNDROBIN: prioritize targets that have been probed
+least, so that each day the minimum fraction of probes
+sent across all targets is as high as possible.
+• RANDOM: prioritize targets according to a predetermined
+random order.
+• NOPRIORITY: use a simple ﬁrst-in-ﬁrst-out (FIFO) queue
+instead of a priority queue. Newly available probes and
+probes following those issued are placed at the end of the
+queue, without prioritization.
+B. Analysis
+Our results suggest that, if a probing rate limit must be
+observed, our approach will yield more accurate and efﬁcient
+0
+20000
+40000
+60000
+80000
+100000
+number of targets
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+stdev(delta/TTL)
+Our Approach
+NoPriority
+Long
+Short
+RoundRobin
+Random
+Sliding
+(a) µ ± 1σ, mean useful interval is 9h30m
+0
+20000
+40000
+60000
+80000
+100000
+number of targets
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+stdev(delta/TTL)
+Our Approach
+NoPriority
+Long
+Short
+RoundRobin
+Random
+Sliding
+(b) µ ± 2σ, mean useful interval is 19h
+Fig. 3: CDF of the standard deviation of inter-probe delay.
+Many of the na¨ıve strategies probe their targets at intervals
+that deviate signiﬁcantly in length, which would lead to poor
+measurement results for several applications.
+data collection than na¨ıve probing techniques.
+In this simulated probing experiment, probes are issued at
+intervals of TTLj+δ, for some small δ. Empirically, the mean
+of the δ values is always near 0, but we present in Figure 3 a
+CDF of the deviation in the δ values for each of the 100,000
+targets. Figure 3 thus illustrates that our approach issues probes
+at more regular intervals than the na¨ıve strategies, which will
+lead to more accurate data collection.
+Our strategy also allows us to probe more targets—and
+issue more probes to those targets we do hit—than the na¨ıve
+strategies. Figure 4 is a CDF of the total number of probes
+issued during useful intervals (“useful probes”) for each of
+the targets, as of the end of the experiment. It shows that we
+are able to completely ﬁnish probing 92–97% (all but 8,228–
+3,070) of our targets by the end of the week, compared to
+about 50–70% of targets completed by the na¨ıve strategies.
+Moreover, we manage to send at least 14 of 50 useful probes
+to all targets, while the na¨ıve strategies send only 3–5 useful
+29
+ICIMP 2011 : The Sixth International Conference on Internet Monitoring and Protection
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-125-0
+
+0
+20000
+40000
+60000
+80000
+100000
+number of targets
+0
+10
+20
+30
+40
+50
+number of useful probes sent
+CDF of Useful Probes Sent
+Our Approach
+NoPriority
+Long
+Short
+RoundRobin
+Random
+Sliding
+(a) µ ± 1σ, mean useful interval is 9h30m
+0
+20000
+40000
+60000
+80000
+100000
+number of targets
+0
+10
+20
+30
+40
+50
+number of useful probes sent
+CDF of Useful Probes Sent
+Our Approach
+NoPriority
+Long
+Short
+RoundRobin
+Random
+Sliding
+(b) µ ± 2σ, mean useful interval is 19h
+Fig. 4: CDF of the number of useful probes sent per strategy.
+Depending on the useful interval length ((a) vs. (b)), we ﬁnish
+probing 92–97% of our targets, compared to 50–70% of targets
+ﬁnished by the other strategies.
+probes to all of the targets by the end of the week. As Figure 4b
+shows, lengthening the useful intervals does not signiﬁcantly
+affect these results.
+Notice as well that we are able to send more probes during
+useful intervals while sending fewer probes overall. Figure 5a
+illustrates our conservative probing behavior. Over the course
+of the week, we send a total of 4.9m probes, all during useful
+intervals—compared to the over 9.6–10m probes sent by na¨ıve
+strategies, only 40% of which can be considered useful.
+Two further observations may be made from Figure 3:
+ﬁrst, with respect to the periodicity standard deviation being
+measured, our approach improves when the useful intervals
+are lengthened, while the na¨ıve strategies perform worse.
+Second, the na¨ıve strategies of SHORTESTPERIODSFIRST and
+SLIDINGWINDOW perform relatively well based on their inter-
+probe delay. For SHORTESTPERIODSFIRST, this performance
+is likely due to the ease with which the short periodicity jobs
+0
+1
+2
+3
+4
+5
+6
+7
+days of experiment
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1.2
+probes sent to date
+1e7
+Total/Useful (x) Probes Sent over Time
+Our Approach (all useful)
+NoPriority
+Long
+Short
+RoundRobin
+Random
+Sliding
+(a) µ ± 1σ, mean useful interval is 9h30m
+0
+1
+2
+3
+4
+5
+6
+7
+days of experiment
+0
+1000000
+2000000
+3000000
+4000000
+5000000
+6000000
+7000000
+8000000
+probes sent to date
+Total/Useful (x) Probes Sent over Time
+Our Approach (all useful)
+NoPriority
+Long
+Short
+RoundRobin
+Random
+Sliding
+(b) µ ± 2σ, mean useful interval is 19h
+Fig. 5: Total vs useful number of probes sent over time. Total
+probes are indicated by unmarked lines; useful probes by criss-
+crossed lines. Notice that we send 4.9m probes, compared to
+the 7–10m probes issued by other strategies.
+interleave with one another, as well as how easily they can
+be deferred if the rate limit is reached. However, notice that
+in Figure 5, the SHORTESTPERIODSFIRST strategy also issues
+the most probes overall. The SLIDINGWINDOW strategy limits
+inter-probe delay by spreading the workload evenly over the
+course of the experiment. That said, by na¨ıvely staggering the
+targets, SLIDINGWINDOW fails to send as many useful probes
+to each target as the other strategies do (Figure 4).
+Our advantage over the other strategies stems largely from
+the fact that we probe only during the useful intervals and that
+the intervals themselves are often not closely aligned with one
+another. For example, targets in various timezones will likely
+have useful intervals staggered throughout the day, providing
+a small subset of targets to probe during each hour of the
+day. Additionally, while we do not assume that probes in
+some part of a useful interval might be more useful than in
+other parts of the same interval (i.e., similar to the notion of
+30
+ICIMP 2011 : The Sixth International Conference on Internet Monitoring and Protection
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-125-0
+
+“weighted tardiness scheduling” [14]), it should be clear that
+our approach could be augmented to work more effectively
+in such contexts since, by design, we have the ﬂexibility
+to constrain the useful intervals as much as is necessary,
+and we can assign different scheduling priorities to probes
+depending upon where they fall within the intervals. Finally,
+our application of the EDF scheduling heuristic improves the
+precision of our periodic probing more than na¨ıve prioritizing
+or a FIFO queue could do.
+We believe the results show that our scheduling approach
+can be used to conduct active measurements on the Internet in
+a more responsible fashion. In particular, we argue that it offers
+a good solution for experimenters interested in distributing
+their workloads over time and across limited resources while
+keeping probing restrictions in mind — yet still maintaining
+their over-arching goal of ﬁnishing their experiments expedi-
+tiously.
+V. CONCLUSION AND FUTURE WORK
+In this work we have introduced a technique for scheduling
+periodic network probes for Internet measurement, towards
+providing a means for researchers to collect measurement data
+while probing responsibly. By leveraging diurnal trafﬁc data
+for our targets, we demonstrated that our technique could be
+used to collect more useful data (while sending fewer probes
+overall) than na¨ıve strategies in the context of a simulated
+7-day large-scale measurement experiment that observed a
+probing rate limit at all times.
+As part of future work, we are exploring speciﬁc enhance-
+ments to our framework to accommodate subsets of targets
+whose probe sequences need to overlap. In doing so, we would
+extend our approach to be of signiﬁcant practical beneﬁt to
+some IP alias resolution applications [2] whose efﬁcient linear
+probing complexity depends on probe sequences to targets
+that overlap in time. We are also interested in performing
+a large-scale empirical evaluation of the real-world beneﬁts
+of using our scheduling strategy to coordinate probes from
+different measurement platforms (e.g., Archipelago [10] and
+FLAME [25]).
+VI. ACKNOWLEDGEMENTS
+We thank the anonymous reviewers for their comments and
+suggestions for improving the paper. This work was supported
+in part by the National Science Foundation under award
+number 0831245.
+NOTES
+1Our intention is not to call attention to these particular studies, as they
+are by no means exceptions to the norm; they do, however, illustrate the sheer
+volume of probes sent in many active Internet measurements today.
+2Note that due to limited data we estimated one useful interval for each
+website w, not one interval for each DNS server-website pair (v, w).
+REFERENCES
+[1] Amotz Bar-Noy, Vladimir Dreizin, and Boaz Patt-Shamir.
+Efﬁcient
+algorithms for periodic scheduling. Computer Networks, 45(2):155–173,
+2004.
+[2] Adam Bender, Rob Sherwood, and Neil Spring. Fixing Ally’s grow-
+ing pains with velocity modeling.
+In Proceedings of the 8th ACM
+SIGCOMM/USENIX Internet Measurement Conference, pages 337–342,
+October 2008.
+[3] John Bethencourt, Jason Franklin, and Mary Vernon. Mapping Internet
+sensors with probe response attacks. In Proceedings of the 14th USENIX
+Security Symposium, pages 13–29, 2005.
+[4] Prasad Calyam, Chang-Gun Lee, Phani Kumar Arava, and Dima Krym-
+skiy. Enhanced EDF scheduling algorithms for orchestrating network-
+wide active measurements. In Proceedings of the 26th IEEE Interna-
+tional Real-Time Systems Symposium, pages 123–132, 2005.
+[5] Crawdad: A Community Resource for Archiving Wireless Data at
+Dartmouth. http://crawdad.cs.dartmouth.edu.
+[6] David Dagon, Niels Provos, Christopher Lee, and Wenke Lee. Corrupted
+DNS resolution paths: The rise of a malicious resolution authority.
+In Proceedings of the 15th Network and Distributed Systems Security
+Symposium, 2008.
+[7] David Dagon, Cliff Zou, and Wenke Lee. Modeling botnet propagation
+using time zones. In Proceedings of the 13th Network and Distributed
+Systems Security Symposium, February 2006.
+[8] M. Fraiwan and G. Manimaran. Scheduling algorithms for conducting
+conﬂict-free measurements in overlay networks. Computer Networks,
+52(15):2819–2830, 2008.
+[9] Luis Grangeia. DNS Cache Snooping, or, Snooping the Cache for Fun
+and Proﬁt, February 2004.
+[10] Young Hyun.
+The Archipelago Measurement Infrastructure.
+In 7th
+CAIDA-WIDE Workshop, 2006.
+[11] Tomas Isdal, Micheal Piatek, Arvind Krishnamurthy, and Thomas
+Anderson.
+Leveraging BitTorrent for end host measurements.
+In
+Proceedings of the 8th Passive and Active Measurement Conference,
+pages 32–41, 2007.
+[12] Jaeyeon Jung, Arthur W. Berger, and Hari Balakrishnan. Modeling TTL-
+based Internet caches. In Proceedings of IEEE INFOCOM, pages 417–
+426, April 2003.
+[13] Ken Keys, Young Hyun, and Mathew Luckie. Internet-scale alias reso-
+lution with MIDAR. www.caida.org/tools/measurement/midar/, 2010.
+[14] Joseph Y-T. Leung. Handbook of Scheduling: Algorithms, Models, and
+Performance Analysis. Chapman Hall/CRC, 2004.
+[15] C. L. Liu and James W. Layland.
+Scheduling algorithms for multi-
+programming in a hard real-time environment.
+Journal of the ACM,
+20:46–61, 1973.
+[16] A. Munier. The complexity of a cyclic scheduling problem with identical
+machines and precedence constraints. European Journal of Operational
+Research, 91(3):471–480, 1996.
+[17] Christos Papadopoulos and John Heidemann.
+Toward best practices
+for active network measurement.
+In Workshop on Active Internet
+Measurements, 2009.
+[18] Zhen Qin, Roberto Rojas-Cessa, and Nirwan Ansari.
+Task-execution
+scheduling schemes for network measurement and monitoring. Com-
+puter Communication, 33(2):124–135, 2010.
+[19] Moheeb Abu Rajab, Fabian Monrose, Andreas Terzis, and Niels Provos.
+Peeking through the cloud: DNS-based estimation and its applications.
+In Proceedings of the 6th Conference on Applied Cryptography and
+Network Security, pages 21–38, 2008.
+[20] Moheeb Abu Rajab, Jay Zarfoss, Fabian Monrose, and Andreas Terzis.
+A multifaceted approach to understanding the botnet phenomenon. In
+Proceedings of the 6th ACM SIGCOMM/USENIX Internet Measurement
+Conference, pages 41–52, October 2006.
+[21] Rob Sherwood and Neil Spring. Touring the Internet in a TCP sidecar.
+In Proceedings of the 6th ACM SIGCOMM Conference on Internet
+Measurement, pages 339–344, 2006.
+[22] Neil Spring, Ratul Mahajan, David Wetherall, and Thomas Anderson.
+Measuring ISP topologies with Rocketfuel. IEEE/ACM Transactions on
+Networking, 12(1):2–16, 2004.
+[23] Paul Vixie. DNS complexity. ACM Queue, 5(3):24–29, April 2007.
+[24] Craig E. Wills, Mikhail Mikhailov, and Hao Shang. Inferring relative
+popularity of Internet applications by actively querying DNS caches. In
+Proceedings of the 3rd ACM SIGCOMM/USENIX Internet Measurement
+Conference, pages 78–90, November 2003.
+[25] A. Ziviani, A. T. A. Gomes, M. L. Kirszenblatt, and T. B. Cardozo.
+FLAME: Flexible lightweight active measurement environment. In Pro-
+ceedings of the 6th International Conference on Testbeds and Research
+Infrastructures for the Development of Networks and Communities,
+2010.
+31
+ICIMP 2011 : The Sixth International Conference on Internet Monitoring and Protection
+Copyright (c) IARIA, 2011.     ISBN: 978-1-61208-125-0
+

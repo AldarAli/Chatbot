@@ -1,0 +1,1602 @@
+132
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+Butterﬂy-like Algorithms for GASPI Split Phase
+Allreduce
+Vanessa End
+and Ramin Yahyapour
+Gesellschaft f¨ur wissenschaftliche
+Datenverarbeitung mbH G¨ottingen
+G¨ottingen, Germany
+Email: <vanessa.end>,
+<ramin.yahyapour>@gwdg.de
+Christian Simmendinger
+and Thomas Alrutz
+T-Systems Solutions for Research GmbH
+Stuttgart/G¨ottingen, Germany
+Email: <christian.simmendinger>,
+<thomas.alrutz>@t-systems-sfr.com
+Abstract—Collective communication routines pose a signiﬁcant
+bottleneck of highly parallel programs. Research on different
+algorithms for disseminating information among all participat-
+ing processes in a collective communication has brought forth
+many different algorithms, some of which have a butterﬂy-
+like communication scheme. While these algorithms have been
+abandoned from usage in collective communication routines
+with larger messages, due to the congestion that arises from
+their use, these algorithms have ideal properties for split-phase
+allreduce routines: all processes are involved in the computation
+of the result in each communication round and they have few
+communication rounds. This article will present several different
+algorithms with a butterﬂy-like communication scheme and
+examine their usability for a GASPI allreduce library routine.
+The library routines will be compared to state-of-the-art MPI
+implementations and also to a tree-based allreduce algorithm.
+Keywords–GASPI; Allreduce; Partitioned Global Address Space
+(PGAS); Collective Communication; Algorithms.
+I.
+INTRODUCTION
+In high performance computing (HPC), one of the main
+bottlenecks is always communication. As we are looking
+into the exascale age, this bottleneck becomes even more
+important than before: with more processes participating in
+the computation of a problem, also more communication
+between these processes is necessary. But already in the past,
+this bottleneck has been observed - especially when using
+collective communication routines, e.g., barrier or allreduce
+routines, where all processes (of a given group) are active in
+the communication. Therefore, many different algorithms have
+been developed in the course of time to reduce the runtime
+of collective routines and thus, the overall communication
+overhead. Key to this reduction of runtime is the underlying
+communication algorithm.
+In this paper, we extend our work from [1], where we
+have introduced an adaption of the n-way dissemination al-
+gorithm, such that it is usable for split-phase allreduce oper-
+ations, as they are deﬁned in, e.g., the Global Address Space
+Programming Interface (GASPI) speciﬁcation [2]. GASPI is
+based on one-sided communication semantics, distinguishing it
+from message-passing paradigms, libraries and application pro-
+gramming interfaces (API) like the Message-Passing Interface
+(MPI) standard [3]. In the spirit of hybrid programming (e.g.,
+combined MPI and OpenMP communication) for improved
+performance, GASPI’s communication routines are designed
+for inter-node communication and leaves it to the programmer
+to include another communication interface for intra-node, i.e.,
+shared-memory communication. Thus, one GASPI process is
+started per node or cache coherent non-uniform memory access
+(ccNUMA) socket.
+To enable the programmer to design a fault-tolerant appli-
+cation and to achieve perfect overlap of communication and
+computation, GASPI’s non-local operations are equipped with
+a timeout mechanism. By either using one of the predeﬁned
+constants GASPI_BLOCK or GASPI_TEST or by giving a
+user-deﬁned timeout value, non-local routines can either be
+called in a blocking or a non-blocking manner. In the same
+way, GASPI also deﬁnes split-phase collective communication
+routines, namely gaspi_barrier, gaspi_allreduce
+and gaspi_allreduce_user, for which the user can
+deﬁne a personal reduce routine. The goal of our research
+is to ﬁnd a fast algorithm for the allreduce operation, which
+has a small number of communication rounds and, whenever
+possible, uses all available resources for the computation of
+the partial results computed in each communication round.
+Collective communication is an important issue in high per-
+formance computing and thus, research on algorithms for the
+different collective communication routines has been pursued
+in the last decades. In the area of the allreduce operation,
+inﬂuences from all other communication algorithms can be
+used, e.g., tree algorithms like the binomial spanning tree
+(BST) [4] or the tree algorithm of Mellor-Crummey and Scott
+[5]. These are then used to ﬁrst reduce and then broadcast the
+data. Also, more barrier related algorithms like the butterﬂy
+barrier of Brooks [6] or the tournament algorithm described by
+Debra Hensgen et al. in the same paper as the dissemination
+algorithm [7] inﬂuence allreduce algorithms.
+Yet, none of these algorithms seems ﬁt for the challenges
+of split-phase remote direct memory access (RDMA) allre-
+duce, with potentially computation-intense user-deﬁned reduce
+operations over an InﬁniBand network. The tree algorithms
+have a tree depth of ⌈log2(P)⌉ and have to be run through
+twice, leading to a total of 2⌈log2(P)⌉ communication rounds.
+
+133
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+In each of these rounds, a large part of the participating
+ranks remain idling, while the n-way dissemination algorithm
+and Bruck’s algorithm only need ⌈logn+1(P)⌉ communication
+rounds and involve all ranks in every round. Also, the butterﬂy
+barrier has k = ⌈log2(P)⌉ communication rounds to traverse,
+but it is also only ﬁt for 2k participants.
+There are two key features which make (n-way) dissemina-
+tion based allreduce operations very interesting for both split-
+phase implementations as well as user-deﬁned reductions, like
+they are both deﬁned in the GASPI speciﬁcation [2].
+1)
+Split-phase collectives either require an external ac-
+tive progress component or, alternatively, progress
+has to be achieved through suitable calls from the
+calling processes. Since the underlying algorithm for
+the split-phase collectives is unknown to the enduser,
+all participating processes have to repeatedly call the
+collective several times. Algorithms for split-phase
+collectives hence ideally both involve all processes
+in every communication step and moreover ideally
+require a minimum number of steps (and thus a
+minimum number of calls). The n-way dissemination
+algorithm exactly matches these requirements. It re-
+quires a very small number of communication rounds
+of order ⌈logn+1(P)⌉ and additionally involves every
+process in all communication rounds.
+2)
+User-deﬁned collectives share some of the above
+requirements in the sense that CPU-expensive local
+reductions ideally should leverage every calling CPU
+in each round and ideally would require a minimum
+number of communication rounds (and hence a min-
+imum number of expensive local reductions).
+In the following section, we will describe related work. In
+Section III, we will shortly introduce the algorithms chosen
+for the experiments, elaborating on the adaption of the n-
+way dissemination algorithm. In addition to the adapted n-
+way dissemination algorithm, this paper will also present
+Bruck’s algorithm [8] and the butterﬂy algorithm [6] with two
+adaptions for P ̸= 2k in more detail. While we have only
+shown experimental results of the allreduce function with the
+sum operation in the former paper, we will now also show
+results using the minimum and the maximum operation in
+allreduce. The experimental setup and experimental results are
+presented in Section IV, where we also evaluate the results of
+the experiments. Section V will then give a conclusion of the
+work and an outlook on future work.
+II.
+RELATED WORK
+Some related work, especially in terms of developed al-
+gorithms, has already been presented in the introduction. Still
+to mention is the group around Jehoshua Bruck, which has
+done much research on multi-port algorithms, hereby devel-
+oping a k-port algorithm with a very similar communication
+scheme as that of the n-way dissemination algorithm [8], [9].
+These works were found relatively late in the implementation
+phase of the adapted n-way dissemination algorithm, why an
+extensive comparison of the two has been postponed to this
+paper.
+In the past years, more and more emphasis has been put on
+RDMA techniques and algorithms [10][11] due to hardware
+development, e.g., InﬁniBandTM[12] or RDMA over Con-
+verged Ethernet (RoCE) [13]. While Panda et al. [10] exploit
+0
+1
+2
+3
+4
+0
+1
+2
+0
+1
+2
+3
+4
+0
+1
+2
+0
+1
+2
+3
+4
+0
+1
+2
+0
+1
+2
+3
+4
+0
+1
+2
+0
+1
+2
+3
+4
+0
+1
+2
+3
+4
+0
+1
+2
+3
+4
+4
+0
+1
+2
+3
+4
+Figure 1. Comparison of the Butterﬂy Algorithm for P = 5 with virtual
+processes (left) to the Pairwise Exchange Algorithm for the same number of
+processes (right).
+the multicast feature of InﬁniBandTM, this is not an option for
+us because the multicast is a so called unreliable operation and
+in addition an optional feature of the InﬁniBandTMarchitecture
+[12]. Congestion in fat tree conﬁgured networks is still a
+topic in research, where for example Zahavi is an active
+researcher [14]. While a change of the routing tables or routing
+algorithm is often not an option for application programmers,
+the adaption of node orders within the API is a possible option.
+III.
+ALGORITHMS
+Since communication is one of the most important bottle-
+necks in parallel computing, many different algorithms have
+been developed for the numerous different collective commu-
+nication routines. In this section, several algorithms, usable
+for collective communication routines, will be presented. Our
+focus lies on algorithms with butterﬂy-like communication
+schemes, as these are at the moment not used for communi-
+cation with large messages, but our initial research shows that
+in modern architecture, the congestion does not arise in the
+way expected. In addition to this, the algorithms are not used
+for allreduce operations at all, because they potentially deliver
+wrong results for some numbers of participating processes, if
+implemented in their original design. With some adaptions, this
+is no longer true for these algorithms. We start the presentation
+of algorithms with the name-giving algorithm, the butterﬂy
+algorithm.
+A. Butterﬂy Algorithm and Pairwise Exchange Algorithm
+Eugene D. Brooks introduced the butterﬂy algorithm in
+the Butterﬂy Barrier in 1986 [6]. It has been designed for
+operations with P = 2k participants. It then has k = ⌈log2 P⌉
+communication rounds, where in each round l, rank p commu-
+nicates with p ± 2l−1. Since this algorithm was not intended
+for the use with P = 2k−1 +q < 2k processes, a ﬁrst adaption
+was made: virtual processes were introduced to virtually have
+P ′ = 2k processes to use the algorithm on. Existing processes
+adopted the role of these virtual processes as depicted in Figure
+1. Processes 0 to 2 act as if they were additional processes 5,
+6 and 7 to comply to the communication scheme for P = 8.
+This introduces unnecessary additional communication and
+overhead. While this is not too dramatic in the case of a
+barrier, this becomes very interesting when the message sizes
+increase. Even when P = 2k, the symmetric communication
+scheme of the butterﬂy algorithm quickly leads to congestion
+in network topologies where there is exactly one link from one
+processor to another, as this link will be used in both directions
+
+134
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+0
+1
+2
+3
+4
+0
+1
+2
+3
+4
+0
+1
+2
+3
+4
+0
+1
+2
+3
+4
+0
+1
+2
+3
+4
+0
+1
+2
+3
+4
+Figure 2. Comparison of the 2-way dissemination algorithm (left) to the
+adapted 2-way dissemination algorithm (right) for 5 ranks.
+at the same time. In addition, the adaption makes the algorithm
+unusable for non-idempotent allreduce operations, as data is
+transferred and processed more than once.
+A different adaption to the original algorithm leads to the
+Pairwise Exchange Algorithm (PE). This algorithm is identical
+to the previous algorithm if P = 2k and is for example
+described in [15]. If the number of processes is not a power
+of two, but rather 2k + q, then the q “leftover” processes ﬁrst
+communicate with the ﬁrst q processes and then wait until the
+2k remaining processes have ﬁnished the algorithm, as shown
+in Figure 1.
+The ﬁrst adaption of the butterﬂy algorithm would make it
+possible to use this algorithm for P ̸= 2k, but it would lead to
+a repeated inclusion of initial data from the virtual processes,
+if used for an allreduce. The pairwise exchange algorithm also
+solves this problem, why this will be the only adaption used
+in the experiments shown below.
+B. (n-way) Dissemination Algorithm
+The basis of the n-way dissemination algorithm is the
+dissemination algorithm developed by Hensgen et al. in 1988
+[7]. To be exact, this algorithm is equivalent to a 1-way
+dissemination algorithm as it is deﬁned by Hoeﬂer et al.
+in 2006 [16]. In Hoeﬂer’s n-way dissemination algorithm,
+each participating process sends and receives n messages per
+communication round - instead of just one as presented by
+Hensgen et al.
+Similar to the butterﬂy algorithm for P ̸= 2k, the n-way
+dissemination algorithm transfers certain data elements more
+than once to the participating ranks if P ̸= (n + 1)k. This is
+exemplarily shown for a 2-way dissemination algorithm with
+5 ranks in Figure 2 on the left. Nevertheless, the algorithm
+shows excellent performance in barrier operations, where it
+does not matter, whether a ﬂag is communicated once or
+twice. It does not seriously impact the runtime and especially
+it does not alter the result of the routine. Using this algorithm
+for allreduce is not practicable in these cases though - the
+result will be wrong and different on all participating nodes.
+To still use this algorithm for allreduce operations, we have
+presented an adaption to the n-way dissemination algorithm,
+which overcomes these problems in [1]. The below described
+adaption of the communication scheme is depicted in Figure
+2 in direct comparison to the original communication scheme.
+The n-way dissemination algorithm, as presented in [16]
+has been developed for spreading data among the participants,
+where n is the number of messages transferred in each
+communication round. As the algorithm is not exclusive to
+nodes, cores, processes or threads, the term ranks will be used
+TABLE I. ROUND-WISE COMPUTATION OF PARTIAL RESULTS IN A
+2-WAY DISSEMINATION ALGORITHM (FROM [1])
+rank
+round 0
+round 1
+round 2
+0
+x0
+S0
+1 = x0 ◦ x8 ◦ x7
+S0
+2 = S0
+1 ◦ S6
+1 ◦ S3
+1
+1
+x1
+S1
+1 = x1 ◦ x0 ◦ x8
+S1
+2 = S1
+1 ◦ S7
+1 ◦ S4
+1
+2
+x2
+S2
+1 = x2 ◦ x1 ◦ x0
+S2
+2 = S2
+1 ◦ S8
+1 ◦ S5
+1
+3
+x3
+S3
+1 = x3 ◦ x2 ◦ x1
+S3
+2 = S3
+1 ◦ S0
+1 ◦ S6
+1
+4
+x4
+S4
+1 = x4 ◦ x3 ◦ x2
+S4
+2 = S4
+1 ◦ S1
+1 ◦ S7
+1
+5
+x5
+S5
+1 = x5 ◦ x4 ◦ x3
+S5
+2 = S5
+1 ◦ S2
+1 ◦ S8
+1
+6
+x6
+S6
+1 = x6 ◦ x5 ◦ x4
+S6
+2 = S6
+1 ◦ S3
+1 ◦ S0
+1
+7
+x7
+S7
+1 = x7 ◦ x6 ◦ x5
+S7
+2 = S7
+1 ◦ S4
+1 ◦ S1
+1
+8
+x8
+S8
+1 = x8 ◦ x7 ◦ x6
+S8
+2 = S8
+1 ◦ S5
+1 ◦ S2
+1
+rank
+round 0
+round 1
+round 2
+0
+x0
+S0
+1 = x0 ◦ x7 ◦ x6
+S0
+2 = S0
+1 ◦ S5
+1 ◦ S2
+1
+1
+x1
+S1
+1 = x1 ◦ x0 ◦ x7
+S1
+2 = S1
+1 ◦ S6
+1 ◦ S3
+1
+2
+x2
+S2
+1 = x2 ◦ x1 ◦ x0
+S2
+2 = S2
+1 ◦ S7
+1 ◦ S4
+1
+3
+x3
+S3
+1 = x3 ◦ x2 ◦ x1
+S3
+2 = S3
+1 ◦ S0
+1 ◦ S5
+1
+4
+x4
+S4
+1 = x4 ◦ x3 ◦ x2
+S4
+2 = S4
+1 ◦ S1
+1 ◦ S6
+1
+5
+x5
+S5
+1 = x5 ◦ x4 ◦ x3
+S5
+2 = S5
+1 ◦ S2
+1 ◦ S7
+1
+6
+x6
+S6
+1 = x6 ◦ x5 ◦ x4
+S6
+2 = S6
+1 ◦ S3
+1 ◦ S0
+1
+7
+x7
+S7
+1 = x7 ◦ x6 ◦ x5
+S7
+2 = S7
+1 ◦ S4
+1 ◦ S1
+1
+in the following. The P participants in the collective operation
+are numbered consecutively from 0, . . . , P −1 and this number
+is their rank. With respect to rank p, the ranks p+1 and p−1
+are called p’s neighbors, where p − 1 will be the left-hand
+neighbor.
+Let P be the number of ranks involved in the collective
+communication. Then k = ⌈logn+1(P)⌉ is the number of
+communication rounds the n-way dissemination algorithm
+needs to traverse, before all ranks have all information. In
+every communication round l ∈ {1, . . . , k}, every process p
+has n peers sl,i, to which it transfers data and also n peers
+rl,j, from which it receives data:
+sl,i
+=
+p + i · (n + 1)l−1
+mod P
+rl,j
+=
+p − j · (n + 1)l−1
+mod P,
+(1)
+with i, j ∈ {1, . . . , n}. Thus, in every round p gets (additional)
+information from n(n + 1)l−1 participating ranks - either
+directly or through the information obtained by the sending
+ranks in the preceding rounds.
+When using the dissemination algorithm for an allreduce,
+the information received in every round is the partial result the
+sending rank has computed in the round before. The receiving
+rank then computes a new local partial result from the received
+data and the local partial result already at hand.
+Let Sp
+l be the partial result of rank p in round l, ◦ be the
+reduction operation used and xp be the rank’s initial data. Then
+rank p receives n partial results Srl,i
+l−1 in round l and computes
+Sp
+l = Sp
+l−1 ◦ Srl,1
+l−1 ◦ Srl,2
+l−1 ◦ · · · ◦ Srl,n
+l−1 ,
+(2)
+which it transfers to its peers sl+1,i in the next round. This
+data movement is shown in Table I for an allreduce based on
+a 2-way dissemination algorithm. First for 9 ranks, then for 8
+participating ranks. By expanding the result of rank 0 in round
+
+135
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+S0
+0
+S7
+0
+S6
+0
+S5
+1
+S2
+1
+S1
+0
+S0
+0
+S2
+0
+0
+1
+2
+3
+4
+5
+6
+7
+0
+1
+2
+3
+4
+5
+6
+7
+g1[1]
+g1[2]
+g2[1]
+g0
+gB
+g2
+1[1]
+g2
+1[2]
+g2
+0
+Figure 3. The data boundaries g and received partial results S
+rl,j
+i
+of ranks 0
+and 2 (from [1]).
+2 from the second table, it becomes visible, that the reduction
+operation has been applied twice to x0:
+S0
+2 = (x0 ◦ x7 ◦ x6) ◦ (x5 ◦ x4 ◦ x3) ◦ (x2 ◦ x1 ◦ x0).
+(3)
+In general, if P ̸= (n+1)k, the ﬁnal result will include data of
+at least one rank twice: In every communication round l, each
+rank receives n partial results each of which is the reduction of
+the initial data of its (n+1)l−1 left-hand neighbors. Thus, the
+number of included initial data elements is described through
+l
+X
+i=1
+n(n + 1)i−1 + 1 = (n + 1)l
+(4)
+for every round l.
+In the cases of the maximum or minimum operation to be
+performed in the allreduce, this does not matter. In the case
+of a summation though, this dilemma will result into different
+ﬁnal sums on the participating ranks. In general, the adaption
+is needed for all operations, where the repeated application of
+the function to the same element changes the ﬁnal result, so
+called non-idempotent functions.
+The adaption of the n-way dissemination algorithm is
+mainly based on these two properties: (1) in every round
+l, p receives n new partial results. (2) These partial results
+are the result of the combination of the data of the next
+Pl−1
+i=0 n(n + 1)i−1 + 1 left-hand neighbors of the sender. This
+is depicted in Figure 3 through boxes. Highlighted in green are
+those ranks, whose data view is represented, that is rank 0’s in
+the ﬁrst row and rank 2’s in the second row. Each box encloses
+those ranks, whose initial data is included in the partial result
+the right most rank in the box has transferred in a given round.
+This means for rank 0, it has its own data, received S6
+0 and
+S7
+0 in the ﬁrst round (gray boxes) and will receive S5
+1 and S2
+1
+from ranks 2 and 5 in round 2 (white boxes).
+As each of the boxes describes one of the partial results
+received, the included initial data items can not be retrieved by
+the destination rank. The change from one box to the next is
+thus deﬁned as a data boundary. The main idea of the adaption
+is to ﬁnd data boundaries in the data of the source ranks in
+the last round, which coincide with data boundaries in the
+destination rank’s data. When such a correspondence is found,
+the data sent in the last round is reduced accordingly. To be
+able to do so, it is necessary to describe these boundaries in a
+mathematical manner. Considering the data elements included
+in each partial result received, the data boundaries of the
+receiver p can be described as:
+glrcv[jrcv] =
+p − n
+lrcv−2
+X
+i=0
+(n + 1)i − jrcv(n + 1)lrcv−1 mod P,
+(5)
+where jrcv(n+1)lrcv−1 describes the boundary created through
+the data transferred by rank rlrcv,jrcv in round lrcv.
+Also, the sending ranks have received partial results in the
+preceding rounds, which are marked through corresponding
+boundaries. From the view of rank p in the last round k, these
+boundaries are then described through
+gs
+lsnd[jsnd] =
+p − s(n + 1)k−1 − n
+lsnd−2
+X
+i=0
+(n + 1)i
+− jsnd(n + 1)lsnd−1 mod P,
+(6)
+with s ∈ {1, . . . , n} distinguishing the n senders and jsnd, lsnd
+corresponding to the above jrcv, lrcv for the sending rank. To
+also consider those cases, where only the initial data of the
+sending or the receiving rank is included more than once in
+the ﬁnal result, we let lsnd, lrcv ∈ {0, . . . , k−1} and introduce
+an additional base border gB in the destination rank’s data.
+These boundaries are also depicted in Figure 3 for the
+previously given example of a 2-way dissemination algorithm
+with 8 ranks. The ﬁgure depicts the data present on ranks 0
+and 2 after the ﬁrst communication round in the gray boxes
+with according boundaries gB, g0, g1[1] and g1[2] on rank 0
+and g2
+0, g2
+1[1] and g2
+1[2] on rank 2. Since the boundaries gB
+and g2
+1[1] coincide, the ﬁrst sender in the last round, that is
+rank 5, transfers its partial result but rank 2 only transfers a
+reduction S′ = x2 ◦ x1 instead of x2 ◦ x1 ◦ x0.
+More generally speaking, the algorithm is adaptable, if
+there are boundaries on the source rank that coincide with
+boundaries on the destination rank, i.e.,
+gs
+lsnd[jsnd] = glrcv[jrcv]
+(7)
+or gs
+lsnd[jsnd] = gB. Then the last source rank, deﬁned through
+s, transfers only the data up to the given boundary and the
+receiving rank takes the partial result up to its given boundary
+out of the ﬁnal result. Taking out the partial result in this
+context means: if the given operation has an inverse ◦−1,
+apply this to the ﬁnal result and the partial result deﬁned
+through glrcv[jrcv]. If the operation does not have an inverse,
+recalculate the ﬁnal result, hereby omitting the partial result
+deﬁned through glrcv[jrcv]. Since this boundary is known from
+the very beginning, it is possible to store this partial result in
+the round it is created, thus saving additional computation time
+at the end.
+From this, one can directly deduce the number of partici-
+pating ranks P, for which the n-way dissemination algorithm
+
+136
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+is adaptable in this manner:
+P = gs
+lsnd[jsnd] − glrcv[jrcv]
+= s(n + 1)k−1 + n
+lsnd−2
+X
+i=0
+(n + 1)i + jsnd(n + 1)lsnd−1
+− n
+lrcv−2
+X
+i=0
+(n + 1)i − jrcv(n + 1)lrcv−1 .
+(8)
+For given P, a 5-tuple (s, lsnd, lrcv, jsnd, jrcv) can be precal-
+culated for different n. Then this 5-tuple also describes the
+adaption of the algorithm:
+Theorem 1: Given the 5-tuple (s, lsnd, lrcv, jsnd, jrcv), the
+last round of the n-way dissemination algorithm is adapted
+through one of the following cases:
+1)
+lrcv, lsnd > 0
+The sender p − s(n + 1)k−1 sends its partial result
+up to gs
+lsnd[jsnd] and the receiver takes out its partial
+result up to the boundary glrcv[jrcv].
+2)
+lrcv > 0, lsnd = 0
+The sender p−s(n+1)k−1 sends its own data and the
+receiver takes out its partial result up to the boundary
+glrcv[jrcv].
+3)
+lrcv = 0, lsnd = 0
+The sender p − (s − 1)(n + 1)k−1 sends its last
+calculated partial result. If s = 1 the algorithm ends
+after k − 1 rounds.
+4)
+lrcv = 0, lsnd = 1
+The sender p−s(n+1)k−1 sends its partial result up
+to gs
+lsnd[jsnd − 1]. If jsnd = 1, the sender only sends
+its initial data.
+5)
+lrcv = 0, lsnd > 1
+The sender p − s(n + 1)k−1 sends its partial result
+up to gs
+lsnd[jsnd] and the receiver takes out its initial
+data from the ﬁnal result.
+Proof: We show the correctness of the above theorem
+by using that at the end each process will have to calculate
+the ﬁnal result from P different data elements. We therefore
+look at (8) and how the given 5-tuple changes the terms
+of relevance. We will again need the fact, that the received
+partial results are always a composition of the initial data of
+neighboring elements.
+1) lrcv, lsnd > 0:
+P = s (n + 1)k−1 + n
+lsnd−2
+X
+i=0
+(n + 1)i + jsnd (n + 1)lsnd−1
+−n
+lrcv−2
+X
+i=0
+(n + 1)i − jrcv (n + 1)lrcv−1
+= gs
+lsnd[jsnd] − glrcv[jrcv] .
+(9)
+In order to have the result of P elements, the sender
+must thus transfer the partial result including the data up
+to gs
+lsnd[jsnd] and the receiver takes out the elements up to
+glrcv[jrcv].
+2) lrcv > 0, lsnd = 0:
+P = s (n + 1)k−1 − n
+lrcv−2
+X
+i=0
+(n + 1)i − jrcv (n + 1)lrcv−1
+= s (n + 1)k−1 − glrcv[jrcv]
+(10)
+and thus we see that the sender must send only its own data,
+while the receiver takes out data up to glrcv[jrcv].
+3) lrcv = 0, lsnd = 0:
+P
+=
+s (n + 1)k−1 .
+(11)
+In the ﬁrst k − 1 rounds, the receiving rank will already
+have the partial result of n Pk−1
+i=1 (n + 1)i = (n + 1)k−1 − 1
+elements. In the last round it then receives the partial sums
+of (s − 1) (n + 1)k−1 further elements by the ﬁrst s − 1
+senders and can thus compute the partial result from a total
+of (s − 1) (n + 1)k−1 + (n + 1)k−1
+=
+s (n + 1)k−1 − 1
+elements. Including its own data makes the ﬁnal result of
+s (n + 1)k−1 = P elements. If s = 1 the algorithm is done
+after k − 1 rounds.
+4) lrcv = 0, lsnd = 1:
+P
+=
+s (n + 1)k−1 + jsnd
+(12)
+Following the same argumentation as above, the receiving
+rank will have the partial result of s (n + 1)k−1 − 1 elements.
+It thus still needs
+P −
+
+s (n + 1)k−1 − 1
+
+=
+s (n + 1)k−1 + jsnd − s (n + 1)k−1 + 1
+=
+jsnd + 1
+(13)
+elements. Now, taking into account its own data it still needs
+jsnd data elements. The data boundary g1 [jsnd] of the sender
+includes jsnd elements plus its own data, i.e., jsnd+1 elements.
+The jth
+snd element will then be the receiving rank’s data, thus
+it sufﬁces to send up to g1 [jsnd − 1].
+5) lrcv = 0, lsnd > 1:
+P
+=
+s (n + 1)k−1
++
+n
+lsnd−2
+X
+i=0
+(n + 1)i + jsnd (n + 1)lsnd−1
+(14)
+In this case, the sender sends a partial result which nec-
+essarily includes the initial data of the receiving rank. This
+means that the receiving rank has to take out its own initial
+data from the ﬁnal result. Due to lsnd > 1 the sender will not
+be able to take a single initial data element out of the partial
+result to be transferred.
+Note that the case where a data boundary on the sending
+side corresponds to the base border on the receiving side, i.e.,
+gs
+lsnd[jsnd] = gB, has not been covered above. In this case,
+there is no 5-tuple like above, but rather P − 1 = gs
+lsnd[jsnd]
+and the adaption and reasoning complies to case 4 in the above
+theorem.
+
+137
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+0
+1
+2
+3
+4
+5
+6
+7
+0
+1
+2
+3
+4
+5
+6
+7
+0
+1
+2
+3
+4
+5
+6
+7
+Figure 4. Communication scheme of Bruck’s global combine algorithm for
+P = 8.
+C. Bruck’s Algorithm
+In [8], Jehoshua Bruck and Ching-Tien Ho present two
+algorithms for global combine operations in n-port message-
+passing systems1 The ﬁrst of the two shows many similarities
+to the n-way dissemination algorithm presented above. While
+the dissemination algorithm and the n-way dissemination
+algorithm were both designed for barrier operations, Bruck’s
+algorithm is explicitly designed for global combine operations,
+i.e., allreduces.
+In ⌈logn+1(P)⌉ communication rounds, every participating
+process transfers and receives n partial reduction results from
+other processes. Let ◦ be the reduction operation used and xp
+be the initial data of process p. The partial results transferred
+by rank p in round l are computed in two versions: Sp
+l [0] is the
+reduction of all previously received results without the initial
+data of the computing process and Sp
+l [1] = xp ◦ Sp
+l [0]. In
+each round, the group of destination ranks is split up into two
+groups, one of which will receive S0
+p, and the other will receive
+S1
+p. For determining these groups, two things are necessary:
+the base (n + 1) representation of P − 1 and the counter c,
+which counts the number of elements on which the reduction
+has already been performed.
+For ease of readability, the algorithm will here be described
+with the help of an example for P = 8 and n = 2 from
+the view of rank 0. The complete communication scheme for
+this example is depicted in Figure 4. The general description
+and the proof can be found in [8]. The algorithm will need
+k = ⌈log3(8)⌉ = 2 communication rounds. For each of these
+rounds l, an αl−1 is needed to split the destination ranks in
+two groups: one receiving Sp
+l [0] and the other Sp
+l [1]. These αi
+are computed through the representation of P − 1 = 7 in a
+base 3 notation:
+7 = (21)3 = (α1α0)3.
+(15)
+In the ﬁrst round, only the partial result S0
+1[1] = x0 is
+transferred to αk−1 = α1 = 2 process. The destination
+processes are
+s1,1 ≡
+p − 1
+mod (P) ≡ −1
+mod 8
+≡ 7
+(16)
+s1,2 ≡
+p − 2
+mod (P) ≡ −2
+mod 8
+≡ 6.
+(17)
+At the same time, rank 0 will receive partial results from its
+peers r1,1 ≡ p + 1 mod (P) ≡ 1 and r1,2 = 2, namely
+S1
+1[1] = x1 and S2
+1[1] = x2. Rank 0 can then calculate new
+1The notation has been heavily changed from the original paper to ﬁt the
+notation throughout the rest of the paper.
+partial results to be transferred in the following round:
+S0
+2[0]
+= S0
+1[0] ◦ S1
+1[1] ◦ S2
+1[1]
+= x1 ◦ x2
+(18)
+S0
+2[1]
+= S0
+1[1] ◦ S1
+1[1] ◦ S2
+1[1]
+= x0 ◦ x1 ◦ x2.
+(19)
+At the same time, c is increased to c = α1 = 2, which will be
+needed for the computation of the communication peers in the
+next round. Rank 0 will now transfer S0
+2[1] to α0 = 1 rank:
+s2,1 ≡ p − α0 · (c + 1)
+mod (P) ≡ −3
+mod 8 ≡ 5, (20)
+and S0
+2[0] to the remaining n − α0 = 2 − 1 = 1 rank:
+s2,2 ≡ p−c−α0·(c+1)
+mod (P) ≡ −5
+mod 8 ≡ 3. (21)
+At the same time, rank 0 will receive partial results from ranks
+r2,1
+≡
+p + (c + 1)
+mod (P)
+≡
+3
+mod 8 ≡ 3
+(22)
+r2,2
+≡
+p + c + α0(c + 1)
+mod (P)
+≡
+5
+mod 8 ≡ 5.
+(23)
+Then, rank 0 can compute the ﬁnal result
+S0
+3[1]
+=
+S0
+2[1] ◦ S3
+2[1] ◦ S5
+2[0]
+=
+x0 ◦ x1 ◦ x2 ◦ (x3 ◦ x4 ◦ x5) ◦ (x6 ◦ x7). (24)
+Bruck’s algorithm was the last to be presented in this paper,
+and a comparison of the different algorithms will be given in
+the next subsection.
+D. Comparison
+The algorithms with a butterﬂy-like communication scheme
+presented in this paper have some signiﬁcant differences,
+starting with the number of communication rounds needed
+to complete the algorithm. The pairwise exchange algorithm
+needs ⌊log2(P)⌋+2 communication rounds, while the adapted
+n-way dissemination algorithm and Bruck’s algorithm only
+need ⌈logn++1(P)⌉ communication rounds. In a split-phase
+allreduce, this will lead to a signiﬁcant difference in the
+number of repeated calls to the allreduce routine. In addition
+to that, q ranks will be idling in the PE algorithm, while the
+other P − q ranks need to do some computation between the
+communication steps. To still exploit the full potential of a
+split-phase allreduce, an application will have to distribute the
+workload accordingly.
+Even though Bruck’s algorithm and the adapted n-way dis-
+semination algorithm need the same number of communication
+rounds to complete an allreduce, an important difference is
+the applicability to different group sizes P. While Bruck’s
+algorithm works for all pairs (n, P), the n-way dissemination
+algorithm can not be adapted for all pairs. In those cases,
+where the algorithm is not adaptable, alternative solutions
+need to be found for the n-way dissemination algorithm.
+One possibility could be, to transfer larger messages in the
+communication rounds, carrying not only a given partial result
+but maybe some additional initial data items to complete the
+allreduce properly. Nevertheless, the adaption to the n-way
+dissemination algorithm can be an important addition to the
+repertoire of allreduce algorithms in a communication library,
+because it makes sense to have different algorithms for dif-
+ferent combinations of message sizes, number of participating
+ranks and reduction routines, as described, e.g., in [17].
+
+138
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+ 0
+ 5
+ 10
+ 15
+ 20
+24 8 12 16
+24
+32
+48
+64
+80
+96
+time in µs
+number of nodes
+Comparison of Averaged Runtimes of the Allreduce with 1 element
+ 2 x 12 core Ivy Bridge E5-2695 v2 2.40GHz, InfiniBand ConnectX FDR
+n-way allreduce
+Intel 4.1.3
+Figure 5. GASPI allreduce with 1 integer and SUM implemented on top of
+ibverbs in comparison to MPI allreduce (from [1]).
+A possibly very important advantage of Bruck’s algorithm
+and the n-way dissemination algorithm in comparison to the
+PE is the choice of communication peers. While the PE
+algorithm has a true butterﬂy communication scheme, the other
+two algorithms do not. Depending on the underlying network
+and routing, two messages will be transferred in opposite
+directions on the same path in a true butterﬂy scheme. This will
+not happen in the butterﬂy-like schemes of Bruck’s algorithm
+and the n-way dissemination algorithm.
+In this paper, we cannot show experiments and results for
+all different use-case scenarios, but will show a comparison of
+the three algorithms, implemented as allreduce library routines
+on top of GASPI.
+IV.
+EXPERIMENTS AND RESULTS
+We have implemented the described algorithms as allreduce
+library functions, using only GASPI routines, in the scope
+of a GASPI collective library and tested the routines on two
+different systems:
+Cluster 1: A system with 14 nodes, each having two
+sockets with 6-core Westmere X5670 @2.93GHz processors
+and an InﬁniBand QDR network in fat tree conﬁguration.
+On this system, the algorithm was compared to the allreduce
+routines of MVAPICH 2.2.0 and OpenMPI 1.6.5, because no
+Intel MPI implementation is available on this system. In the
+following plots, only the OpenMPI runtime is shown, because
+the MVAPICH implementation is much slower. Thus, a user
+would not use this implementation for allreduce-heavy jobs
+and for a better readability, we do not plot these runtimes.
+Cluster 2: A system with two sockets nodes of with 8-
+core Sandy Bridge E5-2670/1600 @2.6GHz processors and an
+InﬁniBand FDR10 network in fat tree conﬁguration. On this
+system, the algorithm was compared to the allreduce routines
+of Intel MPI 4.1.3.049 and OpenMPI 1.8.1. In the following
+plots, only the Intel MPI runtime is shown, because it was
+always the faster implementation.
+The cluster that was used for the tests in the previous paper
+was no longer available for experiments. In the previous paper
+ 0
+ 10
+ 20
+ 30
+ 40
+ 50
+ 0
+ 5
+ 10
+ 15
+ 20
+ 25
+ 30
+time in µs
+number of NUMA sockets
+Overhead of the Allreduce with 1 integer and SUM
+ 2 x 6 core Westmere X5670 2.93GHz, InfiniBand QDR
+n-way on GASPI (int)
+n-way on ibverbs(int)
+n-way on GASPI (double)
+n-way on ibverbs (double)
+Figure 6. Comparison of allreduce with sum, implemented with ibverbs and
+implemented as GASPI library routine Cluster 1. One GASPI process per
+socket.
+[1], we had implemented only the n-way dissemination algo-
+rithm directly on top of ibverbs, which showed a signiﬁcant
+performance improvement when compared to an Intel MPI,
+as seen in Figure 5. To enable portability to different GASPI
+implementations, the option of implementing library routines
+was now chosen. The GASPI implementation used, is the GPI2-
+1.1.1 by the Fraunhofer ITWM [18].
+We will show runtime comparisons for the smallest possi-
+ble message size (one integer) and the largest possible message
+size (255 doubles) in GASPI allreduce routines. In the second
+case, the reduction operation is applied element-wise to an
+array of 255 doubles. The runtimes shown are average times
+from 104 runs to balance single higher runtimes which may
+be caused through different deterministically irreproducible as-
+pects like jitter, contention in the network and similar. Timings
+were taken right before the call and then again immediately
+after the call returned. Between two calls of an allreduce, a
+barrier was called to eliminate caching effects.
+We have started one GASPI process per NUMA socket,
+which is the maximum number of GASPI processes that can
+be started per node. In addition to a comparison with the
+fastest MPI implementation on each cluster, we have also
+implemented a binomial spanning tree as a GASPI allreduce
+library routine, to show the difference between a good perform-
+ing tree implementation and an implementation with butterﬂy-
+like algorithms. For better readability of the plots, we have
+omitted the graphical representation of the runtimes of the
+GPI2 allreduce, because it was, as to be expected, faster than
+the library routines in most cases.
+To convey an idea of the overhead induced through the
+implementation of the allreduce as a GASPI library routine
+instead of implementing the allreduce directly with ibverbs,
+this overhead is depicted in Figure 6. The runtime for the
+allreduce with one integer increases by a factor of up to 1.84
+and with 255 doubles, it even increases by a factor of up to
+2.18. This will have to be kept in mind, when regarding the
+following results.
+While the BST and the PE transfer a ﬁxed number of
+messages per communication round, the n-way dissemination
+
+139
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+ 0
+ 5
+ 10
+ 15
+ 20
+ 25
+ 0
+ 5
+ 10
+ 15
+ 20
+ 25
+ 30
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 1 integer and SUM
+ 2 x 6 core Westmere X5670 2.93GHz, InfiniBand QDR
+Binomial
+Pairwise
+Bruck’s
+n-way
+OpenMPI
+Figure 7. Comparison of Allreduce implementations with 1 integer and sum
+as reduction operation on Cluster 1. One GASPI process per socket.
+ 0
+ 5
+ 10
+ 15
+ 20
+ 25
+ 0
+ 5
+ 10
+ 15
+ 20
+ 25
+ 30
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 1 integer and MAX
+ 2 x 6 core Westmere X5670 2.93GHz, InfiniBand QDR
+Binomial
+Pairwise
+Bruck’s
+n-way
+OpenMPI
+Figure 8. Comparison of Allreduce implementations with 1 integer and
+maximum as reduction operation on Cluster 1. One GASPI process per
+socket.
+algorithm and Bruck’s algorithm may transfer different num-
+bers of messages per communication round. Since Bruck’s
+algorithm works for all combinations of (n, P), we have ﬁxed
+n = 5 for these experiments. For the n-way dissemination
+algorithm the n is chosen in the ﬁrst call of the allreduce
+routine and the smallest n possible is chosen. This procedure
+differs from the procedure in the former paper, where a number
+of allreduces was started in the ﬁrst call and the fastest n was
+chosen. Further research has shown, that the overhead induced
+by calling a sufﬁciently high number of allreduces to chose
+a n in this ﬁrst call is not necessarily compensated through
+the potentially faster following allreduces. In the future, static
+but network dependent lookup tables need to be developed
+or further research on the choice of n depending on the
+bandwidth, latency and message rate of the underlying network
+needs to be done.
+In Figures 7 to 10 the runtime results on Cluster 1 are
+shown with one GASPI process started per NUMA socket.
+ 0
+ 10
+ 20
+ 30
+ 40
+ 50
+ 60
+ 70
+ 0
+ 5
+ 10
+ 15
+ 20
+ 25
+ 30
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 255 doubles and SUM
+ 2 x 6 core Westmere X5670 2.93GHz, InfiniBand QDR
+Binomial
+Pairwise
+Bruck’s
+n-way
+OpenMPI
+Figure 9. Comparison of Allreduce implementations with 255 doubles and
+sum as reduction operation on Cluster 1. One GASPI process per socket.
+ 0
+ 10
+ 20
+ 30
+ 40
+ 50
+ 60
+ 70
+ 0
+ 5
+ 10
+ 15
+ 20
+ 25
+ 30
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 255 doubles and MAX
+ 2 x 6 core Westmere X5670 2.93GHz, InfiniBand QDR
+Binomial
+Pairwise
+Bruck’s
+n-way
+OpenMPI
+Figure 10. Comparison of Allreduce implementations with 255 doubles and
+maximum as reduction operation on Cluster 1. One GASPI process per
+socket.
+Figures 7 and 8 show the runtime results for the allreduce
+with one integer and sum, respectively maximum reduction
+operation. Figures 9 and 10 show the same for 255 doubles.
+In all cases except the maximum operation with 255 doubles,
+none of the library routines are faster than the OpenMPI
+implementation. This comes as no surprise, as the allreduce
+library routines are implemented on top of GASPI routines,
+while the OpenMPI allreduce may make direct use of ibverbs
+routines. The runtimes of the GASPI library allreduce are
+steadier when using the allreduce on 255 doubles than on one
+integer. When increasing the message size, the butterﬂy-like
+algorithms have faster runtimes than the BST. Even though it
+has been suggested, that the symmetric communication scheme
+of the PE algorithm will lead to a high congestion in the
+network, this is not conﬁrmed by the results of the experiments:
+The pairwise exchange algorithm has a runtime close to
+the OpenMPI implementation. When using the maximum as
+reduction operation, all butterﬂy-like algorithms have similar
+runtimes and are even faster than the OpenMPI allreduce
+
+140
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+ 0
+ 10
+ 20
+ 30
+ 40
+ 50
+ 2 4  8  12 16
+ 24
+ 32
+ 48
+ 64
+ 72
+ 96
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 1 integer and SUM
+ 2 x 8-core Sandy Bridge - E5-2670/1600 2.6 GHz, InfiniBand FDR10
+Binomial
+Pairwise
+Bruck’s
+n-way
+IntelMPI
+Figure 11. Comparison of Allreduce implementations with one integer and
+sum as reduction operation on Cluster 2. One GASPI process per socket.
+ 0
+ 10
+ 20
+ 30
+ 40
+ 50
+ 2 4  8  12 16
+ 24
+ 32
+ 48
+ 64
+ 72
+ 96
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 1 integer and MAX
+ 2 x 8-core Sandy Bridge - E5-2670/1600 2.6 GHz, InfiniBand FDR10
+Binomial
+Pairwise
+Bruck’s
+n-way
+IntelMPI
+Figure 12. Comparison of Allreduce implementations with one integer and
+max as reduction operation on Cluster 2. One GASPI process per socket.
+implementation for several process numbers. Overall, Bruck’s
+algorithm shows best results for small messages, i.e., one
+integer, and the PE algorithm shows the best results for large
+messages, i.e., allreduces on 255 doubles. The adapted n-
+way dissemination algorithm runtime plot is very volatile,
+especially for small messages. At least for larger messages,
+it shows consistently faster runtimes than the BST. For all al-
+gorithms, the allreduce with large messages and the maximum
+operation is signiﬁcantly slower than the equivalent allreduce
+with summation as reduction routine.
+Figures 11 to 14 show the averaged runtime results on
+Cluster 2. Here, the difference in runtime between the Intel
+MPI allreduce and the GASPI allreduce routines is signiﬁcant
+for small messages, as can be seen in Figures 11 and 12. Only
+for larger numbers of involved processes the runtimes of the
+GASPI routines and those of the Intel MPI implementation
+converge (Figure 11). While the plots are not as erratic as on
+Cluster 1, this might be due to the fact, that on this system
+we could not test every process count. Especially Bruck’s
+ 0
+ 20
+ 40
+ 60
+ 80
+ 100
+ 120
+ 140
+ 2 4  8  12 16
+ 24
+ 32
+ 48
+ 64
+ 72
+ 96
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 255 doubles and SUM
+ 2 x 8-core Sandy Bridge - E5-2670/1600 2.6 GHz, InfiniBand FDR10
+Binomial
+Pairwise
+Bruck’s
+n-way
+IntelMPI
+Figure 13. Comparison of Allreduce implementations with 255 doubles and
+sum as reduction operation on Cluster 2. One GASPI process per socket.
+ 0
+ 20
+ 40
+ 60
+ 80
+ 100
+ 120
+ 140
+ 2 4  8  12 16
+ 24
+ 32
+ 48
+ 64
+ 72
+ 96
+time in µs
+number of NUMA sockets
+Average Runtimes of the Allreduce with 255 doubles and MAX
+ 2 x 8-core Sandy Bridge - E5-2670/1600 2.6 GHz, InfiniBand FDR10
+Binomial
+Pairwise
+Bruck’s
+n-way
+Intel MPI
+Figure 14. Comparison of Allreduce implementations with 255 doubles and
+max as reduction operation on Cluster 2. One GASPI process per socket.
+algorithm outperforms the other butterﬂy-like algorithms and
+the BST for allreduces with small messages. For large mes-
+sages, i.e., 255 doubles, the GASPI library implementations of
+the allreduce and the Intel MPI implementation have similar
+runtimes. Even though the Intel MPI implementation is still
+faster for a process count up to 48, the gap to the runtimes of
+the GASPI library has closed to a great extent. With higher
+number of processes, the GASPI library routines are even
+faster than the Intel MPI allreduce. Again, the PE shows
+surprisingly good results, especially for large messages and
+the sum operation, while the BST’s runtimes are at the upper
+limit of the library runtimes.
+V.
+CONCLUSION AND FUTURE WORK
+We have examined different algorithms with a butterﬂy-like
+communication scheme for the suitability in a GASPI allreduce
+library function. In [1] we had presented an adaption to the
+n-way dissemination algorithm, which was here compared to
+other algorithms with a similar communication structure. Two
+
+141
+International Journal on Advances in Systems and Measurements, vol 9 no 3 & 4, year 2016, http://www.iariajournals.org/systems_and_measurements/
+2016, © Copyright by authors, Published under agreement with IARIA - www.iaria.org
+important properties of these algorithms are their low number
+of communication rounds while at the same time involving
+all processes in each computation step of the algorithm. This
+makes them ideal candidates for a split-phase allreduce routine
+as deﬁned in the GASPI speciﬁcation.
+We have seen in the experiments, that algorithms with a
+butterﬂy-like communication scheme are often signiﬁcantly
+faster than, e.g., the BST and sometimes even reach the
+performance of existing MPI implementations. This is espe-
+cially important to note, because the results presented in this
+article are results obtained from library implementations, i.e.,
+not directly implemented on ibverbs but rather with GASPI
+routines. As shown in Figure 6, the overhead induced through
+this additional layer of indirection can slow a routine down
+by a factor of 2. Considering this, an implementation of the
+allreduce routine with ibverbs should accelerate the routine to
+approximately the level of the MPI implementations shown for
+small messages and even faster in the case of large messages.
+This is a relevant starting point for future research.
+Another important comparison to make is the inﬂuence of
+the different network interconnects on the algorithm. While in
+the former paper, the FDR network had an immense inﬂuence
+on the runtime of the n-way dissemination algorithm. In this
+case, we are comparing a QDR network to a FDR-10 network
+and do not see the same performance increase. Instead, we
+partially even see a decrease in speed. While Bruck’s algorithm
+does not need more than 10 µs for small messages Cluster 1, it
+needs 16 µs on Cluster 2. For large messages we see a speedup
+from 32 µs to 30 µs for the global maximum and from 30 µs to
+27 µs for the global sum. This again highlights the importance
+of adjusting the used algorithms to the underlying network
+and will be investigated further in the scope of a library with
+collective routines for GASPI implementations.
+All in all, algorithms with a butterﬂy-like communication
+scheme should not be ignored for new communication routines
+and libraries. The increasing message rates and network topol-
+ogy developments might make the use of these algorithms very
+feasible again.
+REFERENCES
+[1]
+V. End, R. Yahyapour, C. Simmendinger, and T. Alrutz, “Adapting the
+n-way Dissemination Algorithm for GASPI Split-Phase Allreduce,” in
+INFOCOMP 2015, The Fifth International Conference on Advanced
+Communications and Computation, June 2015, pp. 13 – 19.
+[2]
+GASPI Consortium, “GASPI: Global Address Space Programming
+Interface, Speciﬁcation of a PGAS API for communication Version
+16.1,” https://raw.githubusercontent.com/GASPI-Forum/GASPI-Forum.
+github.io/master/standards/GASPI-16.1.pdf, February 2016, retrieved
+2016.11.29 at 13:07.
+[3]
+Message-Passing Interface Forum, MPI: A Message Passing Interface
+Standard, Version 3.0.
+High-Performance Computing Center Stuttgart,
+09 2012.
+[4]
+N.-F. Tzeng and H.-L. Chen, “Fast compaction in hypercubes,” IEEE
+Transactions on Parallel and Distributed Systems, vol. 9, 1998, pp. 50–
+55.
+[5]
+J. M. Mellor-Crummey and M. L. Scott, “Algorithms for scalable syn-
+chronization on shared-memory multiprocessors,” ACM Transactions
+on Computer Systems, vol. 9, no. 1, Feb. 1991, pp. 21–65.
+[6]
+E. D. Brooks, “The Butterﬂy Barrier,” International Journal of Parallel
+Programming, vol. 15, no. 4, 1986, pp. 295–307.
+[7]
+D. Hensgen, R. Finkel, and U. Manber, “Two algorithms for barrier syn-
+chronization,” International Journal of Parallel Programming, vol. 17,
+no. 1, Feb. 1988, pp. 1–17.
+[8]
+J. Bruck and C.-T. Ho, “Efﬁcient global combine operations in multi-
+port message-passing systems,” Parallel Processing Letters, vol. 3,
+no. 04, 1993, pp. 335–346.
+[9]
+J. Bruck, C.-T. Ho, S. Kipnis, E. Upfal, and D. Weathersby, “Efﬁcient
+algorithms for all-to-all communications in multi-port message-passing
+systems,” in IEEE Transactions on Parallel and Distributed Systems,
+1997, pp. 298–309.
+[10]
+S. P. Kini, J. Liu, J. Wu, P. Wyckoff, and D. K. Panda, “Fast and Scalable
+Barrier using RDMA and Multicast Mechanisms for InﬁniBand-based
+Clusters,” in Recent Advances in Parallel Virtual Machine and Message
+Passing Interface.
+Springer, 2003, pp. 369–378.
+[11]
+V. Tipparaju, J. Nieplocha, and D. Panda, “Fast collective operations
+using shared and remote memory access protocols on clusters,” in
+Proceedings of the 17th International Symposium on Parallel and
+Distributed Processing, ser. IPDPS ’03.
+Washington, DC, USA: IEEE
+Computer Society, 2003, pp. 84.1–.
+[12]
+InﬁniBand Trade Association, “Inﬁniband architecture speciﬁcation
+volume 1, release 1.3,” https://cw.inﬁnibandta.org/document/dl/7859,
+March 2015, retrieved 2016.11.29 at 13:09.
+[13]
+——, “Inﬁniband architecture speciﬁcation volume 1, release 1.2.1, an-
+nex a16,” https://cw.inﬁnibandta.org/document/dl/7148, 2010, retrieved
+2016.11.29 at 13:08.
+[14]
+E. Zahavi, “Fat-tree Routing and Node Ordering Providing Contention
+Free Trafﬁc for MPI Global Collectives,” J. Parallel Distrib. Comput.,
+vol. 72, no. 11, Nov. 2012, pp. 1423–1432.
+[15]
+R. Gupta, V. Tipparaju, J. Nieplocha, and D. Panda, “Efﬁcient Barrier
+using Remote Memory Operations on VIA-Based Clusters,” in IEEE
+Cluster Computing.
+IEEE Computer Society, 2002, p. 83ff.
+[16]
+T. Hoeﬂer, T. Mehlan, F. Mietke, and W. Rehm, “Fast Barrier Syn-
+chronization for InﬁniBand,” in Proceedings of the 20th International
+Conference on Parallel and Distributed Processing, ser. IPDPS’06.
+Washington, DC, USA: IEEE Computer Society, 2006, pp. 272–272.
+[17]
+R. Thakur, R. Rabenseifner, and W. Gropp, “Optimization of Collective
+Communication Operations in MPICH,” International Journal of High
+Performance Computing Applications, vol. 19, 2005, pp. 49–66.
+[18]
+Fraunhofer ITWM, “GPI2 homepage,” www.gpi-site.com/gpi2, re-
+trieved 2016.11.29 at 13:11.
+

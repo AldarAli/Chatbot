@@ -1,0 +1,814 @@
+Firewall Analysis by Symbolic Simulation
+Arno Wagner
+Consecom AG
+Zurich, Switzerland
+Email: arno.wagner@consecom.com
+Ulrich Fiedler
+Bern University of Applied Sciences
+Biel, Switzerland
+Email: ulrich.ﬁedler@bfh.ch
+Abstract—When doing Layer 4 security analysis on a
+chain of ﬁrewalls, the analyst is faced with the problem
+of combining them into a uniﬁed representation in order
+to verify reachability though the chain and possibly
+compare it with a security policy. Doing this manually is
+labor-intensive and becomes infeasible if ﬁrewalls with
+large conﬁgurations are part of the chain. To automate
+the uniﬁcation process, we have created the Consecom
+Network Analyzer that uses symbolic simulation with
+an interval representation to generate a uniﬁed equiv-
+alent ﬁrewall in a normalized, simple and ﬂat form.
+We show the suitability of this approach for ﬁrewalls
+with large conﬁgurations by giving benchmarks based
+on deployed rule-sets. We also demonstrate the eﬀects
+of diﬀerent optimization techniques on run-time and
+memory footprint. The Consecom Network Analyzer
+has already been used successfully for security reviews.
+Keywords-Firewall Analysis; Symbolic Simulation.
+I. Introduction
+This paper describes the Consecom Network Analyzer
+(CNA), which is the result of a collaboration between
+academia and industry. The CNA is a tool-set that greatly
+reduces the eﬀort, and thereby cost, for practical ﬁrewall
+security analysis in the presence of large ﬁrewall conﬁgu-
+rations.
+A ﬁrewall security analysis is one type of network
+security review. It is often done on network Layer 4, for
+example for TCP and UDP traﬃc. Figure 1 shows the
+basic scenario. The typical steps to be done include:
+1) Normalize ﬁrewall conﬁgurations
+2) Identify critical network paths
+3) Identify ﬁrewalls along each critical path
+4) Determine network reachability on critical paths
+5) Compare reachability and security requirements
+6) Identify non-compliant ﬁrewall rules
+The primary motivation for creating the CNA lies in
+steps 4, 5 and 6. In step 4, the CNA calculates the
+reachability in a uniﬁed simple format that has ﬁrewall
+rules attached as trace information. If a formalized or easy
+to formalize security policy is available, it can be compared
+automatically to the actual network reachability. As such
+a security policy is often not available in practice, step 5
+may still need to be done manually.
+Figure 2 shows the typical application scenario. The
+Rule-Set Converter is not part of the core CNA system
+and has to be adapted for each diﬀerent ﬁrewall descrip-
+tion format. The CNA uses a normalized symbolic Layer
+4 format internally that is based on intervals. As core
+contribution of this paper, we show this representation is
+suitable for calculating reachability even in the presence
+of large ﬁrewall conﬁgurations. To this end, we present
+benchmark calculations on deployed rule-sets. The CNA
+has been used successfully in ﬁrewall security reviews.
+S
+D
+. . .
+FW 1
+FW n
+Fig. 1.
+Unidirectional reachability along a critical network path.
+The paper is organized as follows: Section II introduces
+our network and ﬁrewall model, and the symbolic repre-
+sentation used. Section III gives the operations used for
+single ﬁrewalls. Section IV explains how to calculate uni-
+directional reachability. A complexity analysis is sketched
+brieﬂy in Section V. Section VI describes the implemen-
+tation, while Section VII states benchmark results and
+the eﬀects of diﬀerent optimization techniques. Section
+VIII explains how to extend the approach to two-sided
+reachability and to automated comparison with a policy.
+The paper ﬁnishes with a discussion of related work in
+Section IX and a conclusion in Section X.
+raw
+Converter
+Calculation
+Reachability
+rule sets
+Policy
+Comperator
+Reachability
+Policy
+violations
+rule
+sets
+Network
+FW
+formalized Policy
+normalized
+Rule−Set
+Fig. 2.
+Typical analysis data-ﬂow with the CNA.
+II. Approach
+The reachability calculation process starts with a repre-
+sentation of the initial reachability (disregarding ﬁrewalls),
+which will often be unconstrained. This initial reachability
+is then successively reduced by applying ﬁrewall conﬁgu-
+rations. The end-result is a ﬂat, uniﬁed representation of
+the ﬁrewall-chain, restricted by the initial reachability.
+95
+Copyright (c) IARIA, 2012.     ISBN:  978-1-61208-201-1
+ICIMP 2012 : The Seventh International Conference on Internet Monitoring and Protection
+
+A. Network Model
+We are primarily interested in network reachability as
+restricted by ﬁrewalls. Given a source network S, sequence
+of ﬁrewalls FW1, . . . , FWn and a destination network
+D (see also Figure 1), we say that D is reachable from
+S if there are network packets that can traverse FW1,
+. . ., FWn without being dropped by any FWi. Note that
+some attacks will need two-sided reachability. For example
+services used over TCP can usually only be attacked if
+response packets can traverse the ﬁrewall sequence in
+reverse order. See Section VIII-A for a discussion on how
+to check two-sided reachability.
+We restrict the packet information visible for ﬁrewalls to
+IP addresses and ports, which results in a Layer 4 model.
+Each protocol is treated separately, although it is possible
+to mix protocols, for example by doing a forward analysis
+with TCP and a backward analysis with ICMP in order
+to determine whether an ICMP response to a TCP packet
+would get through. Routing is out of scope for this work,
+as we do not see it as a security mechanism; see Section
+IV-A for a brief discussion.
+B. Subspaces, Boxes and Intervals
+Reachability is represented by subspaces of
+M = src IP × src port × dst IP × dst port
+We organize these subspaces into sets (lists) of axis-aligned
+hyperrectangles in M, also called axis aligned boxes [1] (or
+simply box for short), with
+A
+⊆
+M is represented as
+A
+=
+{b1, . . . , bn} with bi ∈ M and bi is a box.
+In this paper, boxes will always be axis-aligned. A box
+can be represented as a 4-tuple of intervals, which allows
+symbolic computations. This representation is similar to
+the one used in [2].
+Box example:
+b = (10.0.0.0 − 10.0.0.255, 1024 − 65535, 10.1.1.1, 80)
+We use intervals with wrap-around, where IP and port
+number spaces are regarded as circles. This facilitates rep-
+resenting complements. Figure 3 gives graphical examples
+of three boxes in two dimensions represented this way.
+0 1 2 3 4
+5 6
+1
+2
+3
+4
+5
+6
+7
+0
+x2
+x1
+0 1 2 3 4
+5 6
+1
+2
+3
+4
+5
+6
+7
+0
+x2
+x1
+A
+0 1 2 3 4
+5 6
+1
+2
+3
+4
+5
+6
+7
+0
+x2
+x1
+7
+7
+7
+B
+B
+C
+C
+C
+C
+Fig. 3.
+Example: Boxes A,B and C in two dimensions.
+C. Firewall Model
+The CNA uses a simple ﬁrewall model, where each
+ﬁrewall consists of a linear sequence of rules r that each
+have a box describing their applicability and one of the
+target actions accept or drop, with a default drop at the
+end of sequence. This corresponds to the ”simple” model
+of [3].
+D. Rule Application and Set Operations
+In order to apply a ﬁrewall rule r = (b, <action>) to
+a subspace A = {b1, . . . , bn} ⊆ M, we intersect b with
+the diﬀerent bi in turn and apply the action to the result
+A ∩ {b} = {b ∩ b1, . . . , b ∩ bn}.
+The usual set operations are deﬁned on boxes and, by
+extension, on subspaces of M. Some deserve additional
+comments.
+0 1 2 3 4
+5 6
+1
+2
+3
+4
+5
+6
+7
+0
+x2
+x1
+4
+0 1
+3
+5 6
+1
+2
+3
+4
+5
+6
+7
+0
+x2
+x1
+2
+7
+7
+0 1 2 3 4
+5 6
+1
+2
+3
+4
+5
+6
+7
+0
+x2
+x1
+7
+Fig. 4.
+Box intersection, as used in rule application, shown for two
+dimensions.
+Intersection: Intersecting two boxes in d dimensions can
+have up to 2d result boxes. Figure 4 illustrates this in two
+dimensions. For b1, b2 ∈ M, the intersection b1 ∩ b2 may
+consist of up to 16 boxes as M has 4 dimensions.
+Box complement: The complement of an interval is
+derived by adjusting the boundaries. The complement of
+a box is derived by complementing each interval in turn
+and setting all other intervals to full range. Hence, a 4-
+dimensional box has four boxes as its complement.
+Subtraction: Calculating a − b for boxes a and b is done
+by using the relation a − b = a ∩ ¯b from set calculus.
+III. Restricting Reachability by a Single
+Firewall
+The core operations used in determining reachability
+through a single ﬁrewall are apply_firewall() and ap-
+ply_rule(), shown in Figure 5 in simpliﬁed form. The
+task of apply_firewall() is to take a given reachability
+description, stated as a set of boxes, called here a Work
+Set (WS) and, using the rules of the ﬁrewall, determine
+both an Accept Set (AS), which is the part of the WS
+that can pass the ﬁrewall, and a Drop Set (DS) that is
+the part of the WS that cannot pass the ﬁrewall. AS
+and DS are represented as sets of boxes. The function
+apply_rule() forms the basis of apply_firewall() and
+implements calculation of the intersection I between the
+given rule and WS. The intersection I is then added to
+the AS for an accept rule or to the DS for a drop rule.
+96
+Copyright (c) IARIA, 2012.     ISBN:  978-1-61208-201-1
+ICIMP 2012 : The Seventh International Conference on Internet Monitoring and Protection
+
+Building on these two operations, more complex opera-
+tions can be constructed. Note that apply_rule() may at-
+tach trace information to boxes, for example to document
+rule application. If desired, the full history of each box
+can be recorded in the trace. This allows to determine the
+speciﬁc ﬁrewall rules that are responsible for a box being
+in the ﬁnal reachability, and represents information needed
+in any report about ﬁrewall conﬁguration problems.
+apply_firewall(WS, FW):
+AS := ∅
+/* Accept Set */
+DS := ∅
+/* Drop Set
+*/
+for r ∈ in FW:
+/* r: box of a rule */
+I := apply_rule(WS, r)
+WS := WS - I
+/* reduce Work Set
+*/
+if r is accept:
+AS := AS ∪ I
+if r is drop:
+DS := DS ∪ I
+return(AS, DS)
+apply_rule(WS, r):
+I := ∅
+for b ∈ WS:
+/* b is a box */
+i := b ∩ r
+I := I ∪ i
+return(I)
+Fig. 5.
+Pseudo-code for apply_firewall() and apply_rule() (sim-
+pliﬁed).
+IV. Unidirectional Reachability Computation
+Pseudo-code for the calculation of one-direction reacha-
+bility through a sequence of ﬁrewalls is given in Figure
+6. We will typically choose the initial reachability as
+unrestricted. Starting with full, unconstrained reachability
+will ensure the ﬁnal results only rely on the given ﬁrewall
+conﬁgurations. A more restricted initial reachability can
+still be used when appropriate. Ports are unconstrained in
+the initial reachability.
+A. Comments on Routing
+Routing can usually not be regarded as security feature
+in practice and is not seen as one by many customers.
+There are several reasons for this:
+• The primary task of routing is to get packets to a
+speciﬁc destination, while the primary task of a ﬁre-
+wall is to prevent packets reaching a speciﬁc destina-
+tion. Routing conﬁguration and ﬁrewall conﬁguration
+hence have diametrically opposed primary tasks and
+this is reﬂected in procedures and mind-sets.
+• Due to the diﬀerent primary tasks, often the teams
+responsible for routing and for ﬁrewalls are diﬀerent.
+• While ﬁrewall conﬁgurations are handled securely and
+all updates are done with the security model in mind,
+routing conﬁgurations are typically changed with the
+network model in mind and handled in a less secure
+fashion. Routing is hence easier to compromise.
+• Sometimes customers cannot even specify the IP
+ranges of S and D precisely, but have precise ﬁrewall
+information. This may sound surprising, but if routing
+delivers more to a physical target network than ex-
+pected, this is not necessarily a problem. For ﬁrewalls,
+it is a critical error.
+• Routing works on Layer 3, while ﬁrewalls work on
+Layer 4. Mixing the two complicates things and in-
+creases maintenance eﬀort.
+Overall, it is far more practical to separate routing and
+ﬁrewalls and to require that all restrictions on reachability
+must be implemented by ﬁrewalls placed into the critical
+network paths. This is especially true for customers with
+complex ﬁrewall conﬁgurations.
+It should be noted that with this approach, the ques-
+tion arises whether a speciﬁc ﬁrewall actually is on the
+critical network paths it is supposed to be on. Answering
+this question requires a network topology analysis and is
+outside of the scope of this work.
+It should also be noted that network scanning always
+takes routing into account. This is a fundamental limita-
+tion of network scanning.
+in:
+S, D
+/* Source, Destination networks */
+FW1, ..., FWn
+/* firewalls
+*/
+out: ASn
+/* final reachability */
+DS1,. . .,DSn
+/* Drop Sets
+*/
+WS1 := S × <all> × D × <all>
+(AS1, DS1) := apply_firewall(WS1, FW1)
+WS2 := AS1
+(AS2, DS2) := apply_firewall(WS2, FW2)
+WS3 := AS2
+...
+(ASn, DSn) := apply_firewall(FWn − 1, WSn − 1)
+Fig. 6.
+Pseudo-code for calculating unidirectional reachability with
+apply_firewall() for the scenario shown in Figure 1.
+V. Algorithmic Complexity
+We brieﬂy sketch the complexity analysis idea. For a
+worst-case scenario, start with one box and a single ﬁrewall
+with n drop rules. Each drop rule can split (asymptoti-
+cally) at most one element of the Work Set into a maxi-
+mum of 2d (with dimension d = 4) non-overlapping parts
+that are kept in the working set. Hence, each rule increases
+the size of the working set by a maximum of 16, giving an
+overall space complexity of the result of 16 ∗ n ∈ O(n). As
+each successive rule application has to work on 16 more
+boxes, time complexity is 1 ∗ 16 + 2 ∗ 16 + . . . + n ∗ 16 =
+16 ∗ (1 + 2 + . . . + n) = 16
+2 n(n − 1) ∈ O(n2). A very similar
+argument applies to accept rules and mixed rule-sets.
+In comparison, in [4], the authors need worst case eﬀort
+O(n4) to build a Firewall Decision Diagram (FDD) for n
+ﬁrewall rules with for our ﬁrewall model. It is reasonable to
+97
+Copyright (c) IARIA, 2012.     ISBN:  978-1-61208-201-1
+ICIMP 2012 : The Seventh International Conference on Internet Monitoring and Protection
+
+No
+FW /
+rule-set size
+benchmark results
+FW
+raw
+nor-
+opt.
+Python
+input opt.
+trace
+core-loop
+seq.
+malized
+baseline
+reduction
+ported to C
+1
+S
+27
+2’000
+180
+8min
+12MB
+6s
+6MB
+5s
+6MB
+0.2s
+6MB
+2
+M
+67
+23’000
+8300
+-
+-
+546min
+84MB
+222min
+48MB
+48s
+19MB
+3
+L
+170
+27’000
+3100
+-
+-
+34min
+26MB
+20min
+18MB
+4s
+10MB
+4
+S, M
+100min
+32MB
+294s
+14MB
+240s
+13MB
+3s
+14MB
+5
+M, S
+-
+-
+544min
+81MB
+336min
+48MB
+49s
+19MB
+6
+M, L
+5000min
+187MB
+660min
+77MB
+250min
+56MB
+69s
+22MB
+7
+S, M, L
+205min
+58MB
+370s
+16MB
+305s
+16MB
+4s
+16MB
+TABLE I
+Benchmarks (TCP)
+expect that this worst-case is extremely unlikely to happen
+in practice.
+In [3], the authors claim a worst case complexity of
+O(n) for processing a ﬁrewall with n rules in their ”simple
+model”. However, they assume constant eﬀort for set op-
+erations on their accept (A) and drop (D) sets. While the
+BDDs used are typically very eﬃcient set-representations,
+they do not reach O(1) worst-case eﬀort for set operations
+and the correctness of the given complexity analysis seems
+doubtful.
+VI. Implementation
+The CNA is implemented in Python 3 [5] with C
+extensions. This allows a clean and ﬂexible OO design
+and facilitates targeted optimizations. IP addresses and
+port numbers are represented directly by Python integers.
+Boxes are represented as Python 8-tuples (representing
+4 intervals) and encapsulated into class objects in order
+to allow attachment of traces, annotations and ﬁrewall
+rule actions. Subspaces are represented as Python lists.
+The pure-Python prototype is relatively slow and has high
+memory consumption, but can already be used for security
+reviews involving ﬁrewalls with small and medium-sized
+rule-sets.
+VII. Optimizations and Benchmarks
+First, note that in the absence of Network Address
+Translation (NAT), which is rarely deployed in security
+critical networks, ﬁrewalls can be arbitrarily reordered, as
+exactly those packets that make it through all of them are
+part of the ﬁnal reachability space. In particular, a good
+selection of the ﬁrst ﬁrewall to be processed can have sig-
+niﬁcant performance beneﬁts. Benchmarks must therefore
+always be seen together not only with the relevant ﬁrewall
+conﬁgurations, but also their processing order.
+A. Benchmarks
+In order to determine performance and to examine the
+performance impact of diﬀerent optimizations, we give
+a selection of benchmark results1 in Table I. Times are
+1As with all benchmarks, it should be noted that the stated results
+only give a rough idea about runtime, memory footprint and eﬀects
+of diﬀerent optimizations.
+CPU times including input data parsing. Memory sizes
+are the whole process memory footprint, excluding shared
+areas (libraries). The calculations were done using Linux
+(Debian Squeeze 32bit) on an Athlon64 X2 5600+ CPU,
+using only one CPU at a time. Memory was set to the 4GB
+memory model and the machine was running kernel 2.6.38
+from kernel.org without any special optimizations. Python
+versions used include 3.0 and 3.1 with no signiﬁcant
+diﬀerences in performance between the two.
+Lines 1, 2, 3 of Table I describe the ﬁrewall conﬁgura-
+tions used. These are ﬁrewall conﬁgurations deployed in
+the real world. They have a ﬂat form (no sub-chains) and
+a default-drop policy.
+Lines 4ﬀ. of Table I give benchmarks for diﬀerent ﬁrewall
+combinations. The order of the ﬁrewalls is important as
+the ﬁrst one has to be completely represented in memory,
+which causes eﬀort O(|FW1|2) (where |FWk| is the number
+of rules in ﬁrewall FWk). The eﬀort for each additional
+ﬁrewall in the chain is O((|WSi|+|FWi|)·|FWi|) and hence
+higher in the worst case. But when starting with a ﬁrewall
+with small rule-set, we observed that a later combination
+with a ﬁrewall with a large rule-set does often not increase
+the WS size signiﬁcantly, as most rules of the larger ﬁrewall
+do not apply. For that case, the complexity goes eﬀectively
+down to O(|WSi| · |FWi|), which is a lot smaller than
+O(|FWi|2) if |FWi| is is large but |WSi| is small. If the
+ﬁrewall processed ﬁrst has a much larger rule-set than the
+others, we have observed that it will often dominate the
+runtime.
+The columns ”rule-set size” give the number of rules in
+the raw input in vendor format, the normalized number
+of rules without optimization and the optimized rule-set
+size. Benchmarks are given only for TCP for brevity, UDP
+and ICMP analysis have comparable results. We do not
+have benchmarks for comparison against a policy, as we do
+not have a suﬃciently formalized policy and hence looking
+directly at reachability was more eﬃcient. Comparison
+with a policy would incur eﬀort comparable to adding one
+more ﬁrewall conﬁguration in the size of the negated policy
+speciﬁcation. The idea is that nothing must be able to pass
+though the given ﬁrewall chain and an additional ﬁrewall
+representing the negated policy, with the negated policy
+98
+Copyright (c) IARIA, 2012.     ISBN:  978-1-61208-201-1
+ICIMP 2012 : The Seventh International Conference on Internet Monitoring and Protection
+
+representing all forbidden traﬃc.
+As can be seen in Table I, each evaluated optimization
+step has signiﬁcant impact on observed run-time. The ﬁnal
+implementation with all optimizations included has very
+reasonable performance even in the presence of ﬁrewalls
+with large rule-sets.
+B. Firewall Evaluation Sequence Optimization
+The benchmarks demonstrate that the selection of the
+ﬁrst ﬁrewall to be processed has a huge impact on per-
+formance. For the ﬁrst ﬁrewall, the Work Set grows for
+each rule application, while for later ﬁrewalls only rules
+that have a non-empty intersection with the Work Set
+can increase Work Set size. Our experiences show that the
+most restrictive ﬁrewall conﬁguration should be processed
+ﬁrst. In many scenarios, this will be the smallest ﬁrewall
+conﬁguration, measured in number of rules.
+C. Rule-Set Representation Optimization
+Firewall conﬁguration in vendor-formats often allow
+more complex speciﬁcations, such as lists of multiple
+sources, destinations or services. Decomposing such input
+rules into rules using a single box each can results in
+a number of normalized rules that is a lot higher than
+needed. The reason is that many resulting rules will be
+overlapping or adjacent in such a way that they can be
+combined. The column ”opt.”under ”rule-set size”in Table
+I states the reduced number of rules after optimization and
+the column ”input opt.” gives the improved run times and
+memory footprints. The runtime for the input optimiza-
+tion itself is small, as it only works with a focus of one
+raw input rule at a time.
+Note that global box combination would be possible,
+but combining boxes from diﬀerent raw rules has two
+problems: First, if both accept and drop rules are present,
+the combination algorithm has to take rule sequence into
+account. And second, in this approach a box cannot be
+labeled with the single raw ﬁrewall rule it originated from.
+This makes the identiﬁcation of policy-violating rules in
+the end-result diﬃcult.
+D. Trace Reduction
+While the original prototype retained traces for all
+operations that changed a box, it turns out these full traces
+are only beneﬁcial for debugging. In a security analysis,
+only accept and drop actions are relevant and hence it
+is enough to add trace information to a box when it is
+added to an Accept Set or Drop Set. It is not necessary
+to trace when boxes are reduced or split in the WS.
+Hence, traces were reduced accordingly. This also means
+that there can be at most one trace entry per ﬁrewall
+in each box contained in the result. The column ”trace
+reduction” in Table I states the additional performance
+gains. Note that trace reduction was benchmarked with
+input optimization applied as well.
+E. Core-Loop Ported to C
+In a last step, the core loop function apply_rule()
+was ported to C and embedded into the Python code.
+Contrary to Figure 5, WS, AS and DS are passed to
+apply_rule() and are manipulated in-place according to
+the rule action. This puts expensive operations, such as
+data-structure manipulations, into the C code. No other
+special optimizations were done for the C code and in
+particular the standard GNU libc memory allocator was
+used. The column ”core-loop ported to C” in Table I states
+ﬁnal performance ﬁgures. Note that trace reduction and
+rule-set representation optimization was applied as well.
+In addition, we performed a benchmark calculation for
+deployed ﬁrewall conﬁguration ”XL”. It has a normalized
+rule-set size of 2.8 million rules, which reduces to 300’000
+rules after input optimization. Raw rule number is 95.
+Representing conﬁguration XL in memory took 20h of
+CPU time and resulted in a memory footprint of 900MB.
+This shows that ﬁrewall conﬁgurations of this size can still
+be processed with the CNA with reasonable eﬀort.
+VIII. Advanced Analysis
+A. Computing Two-Sided Reachability
+S
+D
+. . .
+FW 1
+FW n
+1.
+2.
+3.
+swap
+src, dst
+Fig. 7.
+Calculating bidirectional reachability.
+Two-sided Reachability allows determining whether an
+agent in the source network S can use a service oﬀered
+in the destination network D that needs a connection,
+for example any service oﬀered over TCP. It also allows
+limited comparison with scan results (for example from
+nmap [6]), which are sometimes used to verify a ﬁrewall
+deployment. Figure 7 gives the idea on how to obtain a
+two-sided reachability result.
+B. Verifying Policy Compliance
+Policies can be represented as an undesired reachability
+U, with the meaning that if anything in U ⊆ M is actually
+reachable through the ﬁrewalls, then the policy is violated.
+How policies are obtained and converted into this format
+is outside of the scope of this work.
+To test policy compliance, the actual network reacha-
+bility A on each critical network path is calculated. Let V
+be the policy-violating reachability. Then V = A∩U. If V
+is non-empty, all elements of V represent violations. The
+non-compliant ﬁrewall rules can be identiﬁed by looking
+at the trace information attached to elements of V , which
+99
+Copyright (c) IARIA, 2012.     ISBN:  978-1-61208-201-1
+ICIMP 2012 : The Seventh International Conference on Internet Monitoring and Protection
+
+they inherit from A. Other compliance tests are possible
+and can be implemented when needed.
+IX. Related Work
+Reachability Analysis: One alternative to using the
+CNA is network scanning, for example with nmap [6].
+It should be noted however that this suﬀers from the
+limitations that routing aﬀects scanning and that normal
+scanning cannot ﬁnd undesired unidirectional reachability.
+Algorithmic Firewall Analysis: It is possible to for-
+malize ﬁrewall functionality with a suitable logic and then
+use approaches from automated theorem proving to derive
+properties and check against violation of conditions. Work
+in this area includes FIREMAN [3] by Yuan, Mai, Su,
+Chen, Chuah and Mohapatra, which uses a BDD (Binary
+Decision Diagram) representation. The idea of using BDDs
+is developed further by Liu and Gouda [4], [7], with the
+introduction of Firewall Decision Diagrams (FDDs).
+The query-engine of Mayer, Wool and Ziskind [8] uses
+a diﬀerent approach. It answers questions on whether a
+speciﬁc packet would traverse a set of ﬁrewalls by using
+a rule-based simulator. This is mostly useful to determine
+the impact of speciﬁc ﬁrewall conﬁguration changes. Its
+value in a complete ﬁrewall security analysis is limited.
+The Margrave Tool [9] uses a similar approach.
+Commercial Tools: A commercial ﬁrewall analyzer is
+oﬀered by AlgoSec [10]. This tool seems to be targeted at
+maintenance and administration of large numbers (up to
+1000) of ﬁrewalls. Commercial ﬁrewall maintenance tools
+with limited audit capabilities are also oﬀered by Tuﬁn
+[11] and FireMon [12].
+X. Conclusion and Future Work
+We have designed and implemented the CNA (Con-
+secom Network Analyzer), a tool that calculates network
+reachability through a series of ﬁrewalls given as a Layer 4
+abstraction by symbolic simulation. The primary use is for
+real-world security audits that examine ﬁrewalls with large
+rule-sets. While using set operations to model ﬁrewalls
+is simple, to the best of our knowledge we are the ﬁrst
+to demonstrate that an abstraction based on intervals
+for reachability and ﬁrewall rules is eﬃcient enough to
+calculate reachability through large deployed ﬁrewall con-
+ﬁgurations in practically useful time and with moderate
+memory footprint, while at the same time retaining the
+capability to annotate each result sub-set with a full trace
+of the applied ﬁrewall rules. Automated result annotation
+is essential when analyzing ﬁrewall chains that include
+ﬁrewalls with a large number of rules.
+One possible direction for future work is optimizing the
+CNA. First, the representation of the Work Set can be
+improved. Using ideas from geometric search, the Work Set
+could be organized into a data-structure that eﬃciently al-
+lows searching for all boxes that intersect a given box. This
+could speed up rule application signiﬁcantly. A second
+possible optimization direction is optimization of memory
+management. Run-times and memory footprint could be
+improved by reducing traces to a ﬁxed size format and by
+providing a custom allocator to the core-loop. Finally, the
+CNA could be adapted to handle IPv6 in the future. This
+may need speciﬁc performance optimizations. We plan to
+defer IPv6 adaption until there is market demand.
+Acknowledgement: We thank the Swiss KTI and Con-
+secom AG for funding parts of this work and the anony-
+mous reviewers for helpful suggestions on how to improve
+the paper.
+References
+[1] “Wikipedia:
+Hyperrectangle,”
+http://en.wikipedia.org/wiki/
+Hyperrectangle, last visited January 2012.
+[2] P. Eronen and J. Zitting, “An expert system for analyzing
+ﬁrewall rules,” in Proc. 6th Nordic Worksh. Secure IT Systems,
+2001, pp. 100–107.
+[3] L. Yuan, J. Mai, Z. Su, H. Chen, C.-N. Chuah, and P. Mo-
+hapatra, “FIREMAN: A Toolkit for FIREwall Modeling and
+ANalysis,” in IEEE Symposium on Security and Privacy, 2006,
+pp. 199–213.
+[4] A. X. Liu and M. G. Gouda, “Diverse ﬁrewall design,” in
+IEEE Transactions on Parallel and Distributed Systems, 19(8),
+August 2008.
+[5] “Python Homepage,” http://python.org/, last visited January
+2012.
+[6] “Nmap Security Scanner,” http://nmap.org/, last visited Jan-
+uary 2012.
+[7] A. X. Liu and M. G. Gouda, “Firewall policy queries,” in IEEE
+Transactions on Parallel and Distributed Systems, 20(6), June
+2009.
+[8] A. J. Mayer, A. Wool, and E. Ziskind,“Oﬄine ﬁrewall analysis,”
+Int. J. Inf. Sec., vol. 5, no. 3, pp. 125–144, 2006.
+[9] T. Nelson, C. Barratt, D. J. Dougherty, K. Fisher, and S. Kr-
+ishnamurthi, “The Margrave Tool for Firewall Analysis,” in
+USENIX Large Installation System Administration Conference
+(LISA), 2010.
+[10] “Algosec Homepage,” http://www.algosec.com/, last visited
+January 2012.
+[11] “tuﬁn Homepage,” http://www.tuﬁn.com/, last visited January
+2012.
+[12] “FireMon Homepage,” http://www.ﬁremon.org/, last visited
+January 2012.
+100
+Copyright (c) IARIA, 2012.     ISBN:  978-1-61208-201-1
+ICIMP 2012 : The Seventh International Conference on Internet Monitoring and Protection
+
