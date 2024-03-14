@@ -33,7 +33,7 @@ class StreamHandler(BaseCallbackHandler):
 retriever = get_retriever()
 
 msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(memory_key='chat_history', chat_memory=msgs, return_messages=True, k=3)
+memory = ConversationBufferMemory(memory_key='chat_history', chat_memory=msgs, return_messages=True, k=5)
 
 llm = ChatOpenAI(model_name='gpt-3.5-turbo', temperature=0.3,
                  streaming=True)  # Change the language model and adjust the temperature
@@ -41,7 +41,7 @@ qa_chain = ConversationalRetrievalChain.from_llm(llm, retriever=retriever, memor
 
 if st.sidebar.button('Clear message history') or len(msgs.messages) == 0:
     msgs.clear()
-    msgs.add_ai_message(f'Ask me anything about!')
+    msgs.add_ai_message(f'Ask me anything about thinkmind!')
 
 avatars = {'human': 'user', 'ai': 'assistant'}
 for msg in msgs.messages:
