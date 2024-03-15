@@ -33,7 +33,7 @@ class StreamHandler(BaseCallbackHandler):
 retriever = get_retriever()
 
 msgs = StreamlitChatMessageHistory()
-memory = ConversationBufferMemory(memory_key='chat_history', chat_memory=msgs, return_messages=True, k=5)
+memory = ConversationBufferMemory(memory_key='chat_history', chat_memory=msgs, return_messages=True, k=10)
 
 llm = ChatOpenAI(model_name='gpt-3.5-turbo', temperature=0.3,
                  streaming=True)  # Change the language model and adjust the temperature

@@ -1,11 +1,11 @@
 import os
 from pdfminer.high_level import extract_text
 
-# Define the path to the directory containing the PDF files
-pdf_dir = "/home/kali-0101/Documents/ny_chat/Chatbot/data/ACHI"
+# Define conferted pdf directory
+pdf_dir = "data/AP2PC/"
 
-# Define the path to the directory where the extracted text files will be stored
-text_dir = "/home/kali-0101/Documents/ny_chat/Chatbot/data/ACHI/texts"
+# Define text directory
+text_dir = "data/AP2PC/texts/"
 
 # Create the text directory if it doesn't exist
 os.makedirs(text_dir, exist_ok=True)

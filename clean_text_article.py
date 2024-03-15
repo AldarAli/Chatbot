@@ -12,7 +12,7 @@ lemmatizer = WordNetLemmatizer()
 stop_words = stopwords.words('english')
 
 # specify the directory you want to use
-directory = '/home/kali-0101/Documents/ny_chat/Chatbot/data/ACHI'
+directory = 'data/AP2PC'
 
 # get all the .txt files from the directory
 txt_files = glob.glob(os.path.join(directory, '*.txt'))
