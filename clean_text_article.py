@@ -12,7 +12,7 @@ lemmatizer = WordNetLemmatizer()
 stop_words = stopwords.words('english')
 
 # specify the directory you want to use
-directory = 'data/AP2PC'
+directory = 'data/DATA_ANALYTICS/texts'
 
 # get all the .txt files from the directory
 txt_files = glob.glob(os.path.join(directory, '*.txt'))
@@ -26,7 +26,7 @@ for txt_file in txt_files:
 
         # Normalize text
         content = content.lower()
-        """
+        
         # remove multiple whitespaces
         content = re.sub(' +', ' ', content)
 
@@ -44,7 +44,7 @@ for txt_file in txt_files:
 
         # join the tokens back into a string
         content = ' '.join(tokens)
-        """
+        
 
         # write the cleaned content back to the txt file
         with open(txt_file, 'w') as f:

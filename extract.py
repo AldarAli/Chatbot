@@ -2,10 +2,10 @@ import os
 from pdfminer.high_level import extract_text
 
 # Define conferted pdf directory
-pdf_dir = "data/AP2PC/"
+pdf_dir = "data/DATA_ANALYTICS"
 
 # Define text directory
-text_dir = "data/AP2PC/texts/"
+text_dir = "data/DATA_ANALYTICS/texts/"
 
 # Create the text directory if it doesn't exist
 os.makedirs(text_dir, exist_ok=True)

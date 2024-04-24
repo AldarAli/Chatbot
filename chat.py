@@ -41,7 +41,7 @@ qa_chain = ConversationalRetrievalChain.from_llm(llm, retriever=retriever, memor
 
 if st.sidebar.button('Clear message history') or len(msgs.messages) == 0:
     msgs.clear()
-    msgs.add_ai_message(f'Ask me anything about thinkmind!')
+    msgs.add_ai_message('Ask me anything about thinkmind!')
 
 avatars = {'human': 'user', 'ai': 'assistant'}
 for msg in msgs.messages:

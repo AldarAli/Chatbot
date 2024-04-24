@@ -1,10 +1,10 @@
 import os
 
 # specify the directory
-directory = 'html'
+directory = '/home/kali-0101/Documents/Bachelor/Chatbot/data/CYBERLAWS'
 
 # specify the prefix
-prefix = 'index.php?view=article&'
+prefix = 'index.php?view=instance&'
 
 # get a list of all files in the directory
 files = os.listdir(directory)

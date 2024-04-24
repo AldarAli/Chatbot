@@ -17,7 +17,7 @@ print(f'The bytes around position {position} are: {bytes}')
 print(f'The text around position {position} is: {text}')
 
 """
-with open("data/AMBIENT/texts/ambient_2019_1_20_40011.txt", "rb") as file:
+with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "rb") as file:
     content = file.read()
 
 
@@ -25,7 +25,7 @@ with open("data/AMBIENT/texts/ambient_2019_1_20_40011.txt", "rb") as file:
 content = content.replace(b'\x91', b'')
 
 # Open the file in binary mode, write the modified content, and close the file
-with open("data/AMBIENT/texts/ambient_2019_1_20_40011.txt", "wb") as file:
+with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "wb") as file:
     file.write(content)
 
 print("Byte removed successfully!")

@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 
 # parse_html_files is a function that takes a folder containing HTML files as input and extracts the meta-information
 # + the main content of the HTML files.
-""" 
+"""
 def extract_article_info(html_file):
     with open(html_file, 'r') as f:
         soup = BeautifulSoup(f.read(), 'html.parser')
@@ -52,8 +52,8 @@ def extract_article_info(html_file):
     }
 
 
-source_folder = "/home/kali-0101/Documents/Chatbot/data/html"
-destination_folder = "/home/kali-0101/Documents/Chatbot/data/html/html_klar"
+source_folder = "/home/kali-0101/Documents/Bachelor/Chatbot/mangler"
+destination_folder = "/home/kali-0101/Documents/Bachelor/Chatbot/data/CYBERLAWS"
 
 html_files = [f for f in os.listdir(source_folder) if
               os.path.isfile(os.path.join(source_folder, f)) and f.endswith('.html')]
@@ -73,7 +73,7 @@ for html_file in html_files:
 
 # parse_html_files conference instance, that takes a folder containing HTML files as input and extracts the
 # conferanse detailer and the main content of the HTML files.
-""" 
+
 def extract_conference_info(html_file):
     with open(html_file, 'r') as f:
         soup = BeautifulSoup(f.read(), 'html.parser')
@@ -116,8 +116,8 @@ def extract_conference_info(html_file):
     }
 
 
-source_folder = "/home/kali-0101/Documents/Chatbot/data/html_instance"
-destination_folder = "/home/kali-0101/Documents/Chatbot/data/conferance_instance"
+source_folder = "/home/kali-0101/Documents/Bachelor/Chatbot/mangler"
+destination_folder = "/home/kali-0101/Documents/Bachelor/Chatbot/data/CYBERLAWS"
 
 html_files = [f for f in os.listdir(source_folder) if
               os.path.isfile(os.path.join(source_folder, f)) and f.endswith('.html')]
@@ -134,12 +134,12 @@ for html_file in html_files:
             for key, value in article_info.items():
                 f.write(f'{key}: {value}\n')
                 
-"""
+
 
 
 # parse_html_files conference event, that takes a folder containing HTML files as input and extracts the conferanse
 # edition.
-
+"""
 def extract_conference_event_info(html_file):
     with open(html_file, 'r') as f:
         soup = BeautifulSoup(f.read(), 'html.parser')
@@ -202,3 +202,4 @@ for html_file in html_files:
         with open(destination_file_txt, 'w') as f:
             for key, value in article_info.items():
                 f.write(f'{key}: {value}\n')
+"""

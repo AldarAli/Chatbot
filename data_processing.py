@@ -5,7 +5,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 
 # Load documents from directory
-txt_loader = DirectoryLoader('data/AP2PC/texts/', glob='*.txt')
+txt_loader = DirectoryLoader('data/DATA_ANALYTICS/texts', glob='*.txt')
 loaders = [txt_loader]
 documents = []
 for loader in loaders:
