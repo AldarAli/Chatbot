@@ -1,31 +1,26 @@
 """
-filename = '/home/kali-0101/Documents/ny_chat/Chatbot/data/ACCSE/texts/accse_2020_1_10_90002.txt'
-
-position = 7116
-range_size = 10  # Number of bytes to read before and after the problematic position
-
-with open(filename, 'rb') as f:
-    f.seek(max(0, position - range_size))  # Go to the start of the range
-    bytes = f.read(2 * range_size)  # Read the bytes in the range
-
-try:
-    text = bytes.decode('johab')  # Try to decode the bytes
-except UnicodeDecodeError:
-    text = 'Cannot decode bytes'
-
-print(f'The bytes around position {position} are: {bytes}')
-print(f'The text around position {position} is: {text}')
+ some files contain special characters that are not supported by the encoding used to read the file.
+ in this case we remove the special characters by reading the file in binary mode,
+ removing the specific byte that represents the special character, 
+ and writing the modified content back to the file.
 
 """
-with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "rb") as file:
-    content = file.read()
 
+# Open the file in binary mode to read its content
+try:
+    with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "rb") as file:
+        content = file.read()
 
-# Remove the byte 0x91 from the content
-content = content.replace(b'\x91', b'')
+    # Remove the byte 0x91 from the content
+    modified_content = content.replace(b'\x91', b'')
 
-# Open the file in binary mode, write the modified content, and close the file
-with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "wb") as file:
-    file.write(content)
+    # Open the file in binary mode to write the modified content
+    with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "wb") as file:
+        file.write(modified_content)
 
-print("Byte removed successfully!")
+    print("Byte removed successfully!")
+except FileNotFoundError:
+    print("The specified file does not exist.")
+except IOError as e:
+    print(f"An error occurred while processing the file: {e}")
+

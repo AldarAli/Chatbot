@@ -1,7 +1,15 @@
+"""
+ in this python code snippet, we sort files in a directory into different subdirectories
+ based on the prefix of the file name.
+ we specify the source directory where the files are located and the destination 
+ directories where the files should be moved based on the prefix of the file name.
+ we then list all the files in the source directory and move the files 
+ to the destination directories based on the prefix of the file name.
+"""
 import os
 import shutil
 
-# specify the source directory
+# specify the source directory where the files are located.
 source_directory = '***'
 
 # specify the destination directories
@@ -82,7 +90,7 @@ destination_directories = {
     'articleid=semapro': 'data/SEMAPRO',
     'articleid=sensorcomm': 'data/SENSORCOMM',
     'articleid=sensordevices': 'data/SENSORDEVICES',
-    #'articleid=service_computation': 'data/SERVICE_COMPUTATION',
+    'articleid=service_computation': 'data/SERVICE_COMPUTATION',
     'articleid=signal': 'data/SIGNAL',
     'articleid=simul': 'data/SIMUL',
     'articleid=smart': 'data/SMART',
@@ -105,14 +113,12 @@ destination_directories = {
     'articleid=soft': 'data/JOURNALS/Soft',
     'articleid=sysmea': 'data/JOURNALS/SysMea',
     'articleid=tele': 'data/JOURNALS/Tele',
-
-    # add more prefixes and directories as needed
 }
 
-# get a list of all files in the source directory
+# list all the files in the source directory.
 files = os.listdir(source_directory)
 
-# move the files to the appropriate destination directory based on their prefix
+# move the files to the destination directories based on the prefix of the file name.
 for file in files:
     for prefix, destination_directory in destination_directories.items():
         if file.startswith(prefix):
@@ -121,6 +127,6 @@ for file in files:
 
             # move the file
             shutil.move(source_file, destination_file)
-            break  # if a file is moved, break the inner loop and move to the next file
+            break  # break the loop if the file is moved to a destination directory.
 
 print("Files moved successfully.")
