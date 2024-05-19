@@ -66,7 +66,7 @@ html_files = [f for f in os.listdir(source_folder) if os.path.isfile(os.path.joi
 
 for html_file in html_files:
     source_file = os.path.join(source_folder, html_file)
-    article_info = extract_article_info(source_file)
+    article_info = article_info(source_file)
 
     if article_info:
         destination_file_txt = os.path.join(destination_folder, os.path.splitext(html_file)[0] + '.txt')

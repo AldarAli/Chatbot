@@ -36,10 +36,10 @@ pinecone_api_key = 'PINECONE_API_KEY'
 
 # check if the environment variables are set.
 if not openai_api_key or not pinecone_api_key:
-    print('Please set the OPENAI_API_KEY and PINECONE_API_KEY environment variables.')
+    print('Please check the OPENAI_API_KEY and PINECONE_API_KEY environment variables.')
     exit()
 
-# start the openai embeddings process.
+# Openai embeddings process.
 try:
     embeddings = OpenAIEmbeddings()
 except Exception as e:

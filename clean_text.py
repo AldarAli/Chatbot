@@ -1,4 +1,3 @@
-# load required libraries.
 import glob
 import os
 import re
