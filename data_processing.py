@@ -1,4 +1,3 @@
-# loading the libraries. 
 from dotenv import load_dotenv
 from langchain.document_loaders import DirectoryLoader
 from langchain.text_splitter import CharacterTextSplitter
@@ -52,6 +51,6 @@ try:
     vectorstore = PineconeVectorStore.from_documents(
         documents, embeddings, index_name=index_name
     )
-    print('Embeddings loaded successfully into the vector database with index name: {index_name}')
+    print('Embeddings loaded successfully into the vector database with index name: thinkmind-chatbot')
 except Exception as e:
     print(f'Error loading the embeddings for the documents to the vector database: {str(e)}')

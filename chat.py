@@ -1,5 +1,3 @@
-# loading the required libraries 
-
 import streamlit as st
 from dotenv import load_dotenv
 from langchain.chains import ConversationalRetrievalChain
@@ -45,7 +43,6 @@ if user_query:
     with response_container:
         st.markdown("Generating response...")  
     response = qa_chain.run(user_query)
-    # Write the final response directly
     response_container.markdown(response)
 
 
