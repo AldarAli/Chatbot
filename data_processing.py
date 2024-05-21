@@ -1,3 +1,8 @@
+"""
+this code snippet processes the text files in the specified directory by loading the documents,
+and make the text data ready for the embeddings process and store the embedded data into
+the vector database Pinecone.
+"""
 from dotenv import load_dotenv
 from langchain.document_loaders import DirectoryLoader
 from langchain.text_splitter import CharacterTextSplitter
@@ -5,7 +10,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 
 # Load documents from the specified directory.
-txt_loader = DirectoryLoader('data/CYBERLAWS/texts/instance', glob='*.txt')
+txt_loader = DirectoryLoader('data/About', glob='*.txt')
 loaders = [txt_loader]
 documents = []
 for loader in loaders:

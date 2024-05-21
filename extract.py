@@ -1,3 +1,7 @@
+"""
+this code snippet extracts text from PDF files 
+in a specified directory and saves the extracted text to text files directory.
+"""
 import os
 from pdfminer.high_level import extract_text
 

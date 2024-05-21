@@ -1,8 +1,9 @@
 """
  in this python code snippet, we sort files in a directory into different subdirectories
- based on the prefix of the file name.
+ based on the conference names in the file name.
  we specify the source directory where the files are located and the destination 
- directories where the files should be moved based on the prefix of the file name.
+ directories where the files should be moved based on the prefix of the file name which 
+ contain conference name it belog to.
  we then list all the files in the source directory and move the files 
  to the destination directories based on the prefix of the file name.
 """
@@ -14,7 +15,7 @@ source_directory = '***'
 
 # specify the destination directories
 destination_directories = {
-    'articleid=access': 'data/ACCESS',
+    'articleid=access': 'data/ACCESS', 
     'articleid=accse': 'data/ACCSE',
     'articleid=achi': 'data/ACHI',
     'articleid=adaptive': 'data/ADAPTIVE',
