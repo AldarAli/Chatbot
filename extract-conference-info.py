@@ -9,11 +9,11 @@ def conference_info(html_file):
     with open(html_file, 'r', encoding='utf-8') as f:
         soup = BeautifulSoup(f.read(), 'html.parser')
 
-    # Extract the main content of the conference.
+    # Extracting the main content of the conference.
     main_content = soup.find("td", class_="text")
     all_p_tags = main_content.find_all("p", class_="a3") if main_content else None
     
-    # Define the information we want to extract.
+    # information we want to extract.
     wanted_content = ["Editors:", "ISBN:", "Location:", "Dates:", "Articles:"]
     extracted_info = {}
     articles = []
@@ -34,7 +34,7 @@ def conference_info(html_file):
     conference_name_link = conference_name_element.find("a") if conference_name_element else None
     conference_name = conference_name_link.text if conference_name_link else None
 
-    # Extract the conference name and articles of the conference and add them to the extracted information.
+    # Extracting the conference name and articles of the conference and add them to the extracted information.
     extracted_info["Articles"] = articles
     extracted_info["Conference Name"] = conference_name
 

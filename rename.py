@@ -5,13 +5,13 @@ in this code snippet we edit the file names to make them easier to identify and 
 """
 import os
 
-# specify the directory containing the files.
+# specifying the directory containing the files.
 directory = '/home/kali-0101/Documents/Bachelor/Chatbot/data/'
 
-# specify the prefix_file name.
+# define the prefix_file name.
 prefix_file = 'index.php?view=instance&'
 
-# get a list of all files in the directory
+# list of all files in the directory
 files = os.listdir(directory)
 
 # renames the files.

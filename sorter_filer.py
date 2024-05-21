@@ -10,7 +10,7 @@
 import os
 import shutil
 
-# specify the source directory where the files are located.
+# specifying the source directory where the files are located.
 source_directory = '***'
 
 # specify the destination directories
@@ -116,10 +116,10 @@ destination_directories = {
     'articleid=tele': 'data/JOURNALS/Tele',
 }
 
-# list all the files in the source directory.
+# listing all files in the source directory.
 files = os.listdir(source_directory)
 
-# move the files to the destination directories based on the prefix of the file name.
+# moving the files to the destination directories based on the prefix of the file name.
 for file in files:
     for prefix, destination_directory in destination_directories.items():
         if file.startswith(prefix):

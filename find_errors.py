@@ -6,15 +6,15 @@
 
 """
 
-# Open the file in binary mode to read its content
+# Opening the file in binary mode to read its content
 try:
     with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "rb") as file:
         content = file.read()
 
-    # Remove the byte 0x91 from the content
+    # Removing the byte 0x91 from the content
     modified_content = content.replace(b'\x91', b'')
 
-    # Open the file in binary mode to write the modified content
+    # Opening the file in binary mode again to write the modified content
     with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "wb") as file:
         file.write(modified_content)
 
