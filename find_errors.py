@@ -8,14 +8,14 @@
 
 # Opening the file in binary mode to read its content
 try:
-    with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "rb") as file:
+    with open("data/ICNS/texts/icns_2015_3_30_10111.txt", "rb") as file:
         content = file.read()
 
     # Removing the byte 0x91 from the content
     modified_content = content.replace(b'\x91', b'')
 
     # Opening the file in binary mode again to write the modified content
-    with open("data/DATA_ANALYTICS/texts/data_analytics_2023_1_10_60009.txt", "wb") as file:
+    with open("data/ICNS/texts/icns_2015_3_30_10111.txt", "wb") as file:
         file.write(modified_content)
 
     print("Byte removed successfully!")

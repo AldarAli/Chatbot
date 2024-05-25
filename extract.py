@@ -6,8 +6,8 @@ import os
 from pdfminer.high_level import extract_text
 
 # Defining directories for PDFs and text files.
-pdf_dir = "data/DATA_ANALYTICS"
-text_dir = "data/DATA_ANALYTICS/texts"
+pdf_dir = "data/ICONS"
+text_dir = "data/ICONS/texts"
 
 # Create the text directory if it doesn't exist already.
 os.makedirs(text_dir, exist_ok=True)
