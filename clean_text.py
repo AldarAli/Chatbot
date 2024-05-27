@@ -17,7 +17,7 @@ lemmatizer = WordNetLemmatizer()
 stop_words = stopwords.words('english')
 
 # specifying the directory we want to clean.
-directory = 'data/ICONS/texts'
+directory = 'data/WEB/texts'
 
 # getting all the txt files in the directory.
 txt_files = glob.glob(os.path.join(directory, '*.txt'))

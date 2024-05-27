@@ -10,7 +10,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 
 # Loadings documents from the specified directory.
-txt_loader = DirectoryLoader('data/ICONS/texts', glob='*.txt')
+txt_loader = DirectoryLoader('data/WEB/texts', glob='*.txt')
 loaders = [txt_loader]
 documents = []
 for loader in loaders:
